@@ -60,6 +60,8 @@ CANIS/
 │   └── templates/index.html
 ├── vision/                         Phase 6 — ArUco detection (runs on the Pi)
 │   └── detect.py                     marker -> POST zone to /detect  (--test mode, no camera needed)
+├── hardware/                       wiring + power reference
+│   └── WIRING.md                     every pin, every wire, power architecture, L298N plan
 ├── State_Machine_CANIS/            offline state-machine reference (pure logic, no WiFi)
 ├── State_Machine_WiFi/             networked state-machine reference (superseded by CANIS_Core)
 ├── Sensors_Test/                   standalone PIR + ultrasonic test
@@ -78,12 +80,20 @@ Three states, driven by an **arousal** level (0–100):
 
 | State | Meaning | Behavior |
 |-------|---------|----------|
-| `CALM` | Baseline, settled | Rewards *sustained* calm at intervals |
+| `CALM` | Baseline, settled | Rewards *sustained* calm (after warm-up, ≥30 s apart) |
 | `AROUSAL` | Something detected, watching | Monitor only — **no intervention** |
-| `CORRECTION` | Bad behavior confirmed | Marker buzzer + orient toward zone, every 2 s |
+| `CORRECTION` | Bad behavior confirmed | 800 Hz disengage buzzer + orient toward zone, every 2 s |
 
-Arousal **rises** on a detection (`+25`), **decays** over time when quiet (`12/sec`).
-Crossing `20` → `AROUSAL`, crossing `70` → `CORRECTION`.
+Arousal is **rate-driven**: while *any* detection is active (local PIR/ultrasonic
+**or** a remote vision call from the Pi) it **rises** at `+30/sec`; it always
+**decays** at `12/sec`, so presence climbs (net `+18/sec`) and absence settles.
+Crossing `20` → `AROUSAL`, crossing `70` → `CORRECTION`. Dropping back to `CALM`
+is what earns a reward — CANIS rewards *leaving*, never punishes entering.
+
+A confirmed detection holds arousal up while it lasts (so a lingering dog isn't
+wrongly "rewarded for leaving"). Rewards are rate-limited: a 20 s cooldown + a
+30/session cap so the hopper can't empty. Power & pinout: see
+[`hardware/WIRING.md`](hardware/WIRING.md).
 
 **The key design idea:** dropping back into `CALM` from `AROUSAL`/`CORRECTION` means the
 dog disengaged / left the zone — and *that* is what gets rewarded. CANIS rewards
@@ -152,9 +162,11 @@ you'll see the simulator loop running.
    `arduino_secrets.h` is gitignored, so credentials never get committed.
 2. Pi, ESP32, and phone all on the **same WiFi**.
 3. Arduino IDE → Boards Manager → install **"esp32 by Espressif"** → select your ESP32
-   board → Upload. Serial Monitor @ **115200**.
+   board → flash **`CANIS_Core`** (the full integrated brain; `State_Machine_WiFi` is
+   just a simpler reference). Serial Monitor @ **115200**.
 4. Tap `t` a few times → arousal climbs, dashboard footer flips to *"live data —
-   ESP32"*, state card changes color, counters move.
+   ESP32"*, state card changes color, counters move. (Pins & power:
+   [`hardware/WIRING.md`](hardware/WIRING.md).)
 
 ### Treat dispenser (Arduino Uno)
 Standalone and bench-tested. Push the button (pin 2) → buzzer marker → servo gate
@@ -174,9 +186,9 @@ tube "throat" (one treat at the gate at a time) matters more than timing.
 | 5 | State machine | ✅ Real sensors in, real outputs out (CANIS_Core.ino): treat dispense + CORRECTION buzzer cue + reward cooldown/cap. Only "orient toward zone" waits on motors |
 | 6 | Vision / detection | 🟡 Pi→ESP32 command channel built + tested (/detect, /command, ESP32 polls); ArUco script ready (vision/detect.py); only live capture waits on the USB webcam |
 | 7 | Dashboard | ✅ Live ESP32→Pi link + simulator fallback; auto-starts on boot (systemd) |
-| 8 | Power & reliability | ⬜ Not started |
-| 9 | Full integration test | ⬜ Not started |
-| 10 | Documentation | 🟡 This file |
+| 8 | Power & reliability | 🟡 Firmware-side done (back-off, reward cooldown/cap, heap-safe); battery/buck wait on parts. Power plan: hardware/WIRING.md |
+| 9 | Full integration test | ⬜ Needs motors (L298N) |
+| 10 | Documentation | 🟡 README + hardware/WIRING.md + secure GitHub repo |
 
 **Running in parallel:** gradual exposure / fear-desensitization with Shifu starts as
 soon as Phase 1 produces a robot that can move at all — it runs on its own
