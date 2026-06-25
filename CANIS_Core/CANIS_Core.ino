@@ -32,7 +32,8 @@ const char* WIFI_SSID = SECRET_SSID;
 const char* WIFI_PASS = SECRET_PASS;
 const char* PI_HOST   = SECRET_PI_HOST;
 const int   PI_PORT   = 5000;
-const unsigned long REPORT_MS = 1000;   // push to Pi at 1 Hz (plus on change)
+const unsigned long REPORT_MS = 1000;   // push state to Pi at 1 Hz (plus on change)
+const unsigned long POLL_MS   = 1000;   // poll Pi for vision commands at 1 Hz
 
 // ---------- Sensor pins (from Sensors_Test) ----------
 const int PIR_PIN  = 27;   // PIR OUT (3.3V logic, read directly)
@@ -109,6 +110,10 @@ int rewardCount = 0;
 int interventionCount = 0;
 unsigned long lastRewardMs = 0;   // for the reward cooldown
 
+unsigned long lastPoll = 0;       // vision-command polling
+bool   visionActive = false;      // a fresh vision detection from the Pi
+String visionZone   = "";         // which zone the camera reported
+
 void setup() {
   Serial.begin(115200);
   delay(300);
@@ -135,8 +140,9 @@ void loop() {
   lastTick = now;
 
   handleInput();          // manual t/r override
-  readSensors(now);       // real triggers -> sets detectionActive
-  updateArousal(dt);      // detection drives arousal up; decay always pulls down
+  readSensors(now);       // local PIR + ultrasonic
+  pollCommand(now);       // vision detections from the Pi (remote trigger)
+  updateArousal(dt);      // any detection drives arousal up; decay always pulls down
   updateState();          // recompute state + transitions (verbatim)
   runStateBehavior(now);  // act on current state (verbatim)
   logStatus(now);
@@ -199,8 +205,6 @@ void readSensors(unsigned long now) {
   bool inZoneRaw = (dist > 0 && dist <= ZONE_CM);
   if (zone.update(inZoneRaw))
     Serial.printf("  [SENSOR] ZONE -> %s\n", zone.state ? "IN ZONE" : "clear");
-
-  detectionActive = pir.state || zone.state;  // this is the old 't', made real
 }
 
 float readDistanceCm() {
@@ -215,6 +219,8 @@ float readDistanceCm() {
 // ---------- Arousal: the SEAM ----------
 // Sustained detection climbs; decay always bleeds off. Net +18/s while detected.
 void updateArousal(float dt) {
+  // Any detection drives arousal: local sensors OR a remote vision call from the Pi.
+  detectionActive = pir.state || zone.state || visionActive;
   if (detectionActive) arousal += AROUSAL_RISE_PER_SEC * dt;
   arousal -= DECAY_PER_SEC * dt;
   if (arousal > AROUSAL_MAX) arousal = AROUSAL_MAX;
@@ -260,7 +266,9 @@ void runStateBehavior(unsigned long now) {
       if (now - lastCorrectionAction >= 2000) {
         lastCorrectionAction = now;
         tone(BUZZER_PIN, CORRECTION_TONE_FREQ, CORRECTION_TONE_MS);  // disengage cue
-        Serial.println("  [OUTPUT] correction cue (buzzer) + would orient toward zone");
+        Serial.print("  [OUTPUT] correction cue (buzzer) + would orient toward zone");
+        if (visionZone.length()) { Serial.print(": "); Serial.print(visionZone); }  // vision tells us where
+        Serial.println();
       }
       break;
   }
@@ -325,6 +333,45 @@ void reportToPi(unsigned long now) {
   if (code <= 0) {
     Serial.printf("  [NET] POST failed (%s) — backing off 5s\n", http.errorToString(code).c_str());
     postBackoffUntil = now + 5000;               // Pi unreachable: pause POSTs, keep loop snappy
+  }
+  http.end();
+}
+
+// ---------- Poll the Pi for vision commands (Pi -> ESP32) ----------
+// GET /command returns the detected zone name, or "NONE". A non-NONE reply is a
+// remote detection that drives arousal just like the local sensors. Shares the
+// reportToPi back-off so an unreachable Pi never stalls the loop.
+void pollCommand(unsigned long now) {
+  if (now < postBackoffUntil) return;
+  if (now - lastPoll < POLL_MS) return;
+  lastPoll = now;
+  if (WiFi.status() != WL_CONNECTED) return;
+
+  char url[64];
+  snprintf(url, sizeof(url), "http://%s:%d/command", PI_HOST, PI_PORT);
+
+  HTTPClient http;
+  http.begin(url);
+  http.setTimeout(300);
+  int code = http.GET();
+  if (code == 200) {
+    String body = http.getString();
+    body.trim();
+    bool wasActive = visionActive;
+    if (body == "NONE" || body.length() == 0) {
+      visionActive = false;
+      visionZone   = "";
+    } else {
+      visionActive = true;
+      visionZone   = body;
+    }
+    if (visionActive != wasActive) {
+      if (visionActive) { Serial.print("  [VISION] dog in zone: "); Serial.println(visionZone); }
+      else              { Serial.println("  [VISION] zone clear"); }
+      lastReport = 0;   // push to dashboard immediately on a vision change
+    }
+  } else if (code <= 0) {
+    postBackoffUntil = now + 5000;   // Pi gone: back off poll + report together
   }
   http.end();
 }

@@ -139,6 +139,28 @@ sim = Simulator()
 
 
 # ---------------------------------------------------------------------------
+# Vision -> robot command channel
+# The vision script POSTs the detected zone to /detect; the ESP32 polls
+# /command and reacts. A command goes stale after COMMAND_TTL with no refresh,
+# so a detection naturally clears when the dog leaves / vision stops seeing it.
+# ---------------------------------------------------------------------------
+COMMAND_TTL = 3.0   # seconds a detection stays "current" without a new POST
+
+class Command:
+    def __init__(self):
+        self.zone = None
+        self.at = 0.0
+    def set(self, zone):
+        self.zone, self.at = zone, time.time()
+    def current(self):
+        if self.zone and (time.time() - self.at) < COMMAND_TTL:
+            return self.zone
+        return None
+
+command = Command()
+
+
+# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 @app.route("/")
@@ -158,6 +180,24 @@ def ingest():
         return jsonify({"ok": False, "error": "missing 'state'"}), 400
     live.ingest(payload)
     return jsonify({"ok": True})
+
+
+@app.route("/detect", methods=["POST"])
+def detect():
+    # vision posts {"zone": "<name>"} when it sees the dog's marker in this zone
+    payload = request.get_json(silent=True) or {}
+    zone = payload.get("zone")
+    if not zone:
+        return jsonify({"ok": False, "error": "missing 'zone'"}), 400
+    command.set(str(zone))
+    return jsonify({"ok": True})
+
+
+@app.route("/command")
+def get_command():
+    # ESP32 polls this. Plain text (zone name or "NONE") is trivial to parse on the MCU.
+    z = command.current()
+    return (z if z else "NONE"), 200, {"Content-Type": "text/plain"}
 
 
 if __name__ == "__main__":

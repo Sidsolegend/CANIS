@@ -48,16 +48,22 @@ both other devices. The Pi does vision (OpenCV) and serves the web UI.
 ```
 CANIS/
 ├── README.md                       ← this file
-├── State_Machine_CANIS/            ESP32 state machine — OFFLINE debug version
-│   └── State_Machine_CANIS.ino       (pure logic, no WiFi; for debugging the brain)
-├── State_Machine_WiFi/             ESP32 state machine + WiFi push to the Pi
-│   └── State_Machine_WiFi.ino        (the networked version — use this on hardware)
-├── Treat_Dispenser_CANIS/          Arduino Uno — treat dispenser (bench-tested, works)
+├── arduino_secrets.h.example       credentials template (copy into networked sketches)
+├── CANIS_Core/                     ESP32 — THE INTEGRATED BRAIN (use this on hardware)
+│   └── CANIS_Core.ino                sensors + state machine + dispense + buzzer + WiFi + vision poll
+├── Treat_Dispenser_CANIS/          Arduino Uno — treat dispenser (button + serial DISPENSE)
 │   └── Treat_Dispenser_CANIS.ino
-└── dashboard/                      Flask dashboard (runs on the Pi)
-    ├── app.py
-    ├── requirements.txt
-    └── templates/index.html
+├── dashboard/                      Flask dashboard + command channel (runs on the Pi)
+│   ├── app.py                        /api/state, /ingest, /detect, /command
+│   ├── canis-dashboard.service       systemd unit (auto-start on boot)
+│   ├── requirements.txt
+│   └── templates/index.html
+├── vision/                         Phase 6 — ArUco detection (runs on the Pi)
+│   └── detect.py                     marker -> POST zone to /detect  (--test mode, no camera needed)
+├── State_Machine_CANIS/            offline state-machine reference (pure logic, no WiFi)
+├── State_Machine_WiFi/             networked state-machine reference (superseded by CANIS_Core)
+├── Sensors_Test/                   standalone PIR + ultrasonic test
+├── WiFi_Scan_Test/  WiFi_Connect_Test/   ESP32 WiFi diagnostics (kept as tools)
 ```
 
 > Eventual GitHub structure (`firmware/esp32/`, `firmware/arduino/`, `vision/`,
@@ -166,7 +172,7 @@ tube "throat" (one treat at the gate at a time) matters more than timing.
 | 3 | ESP32 ↔ Arduino serial | 🟡 DISPENSE command works (ESP32 GPIO13 → Arduino pin10, one-way); movement cmds wait on L298N |
 | 4 | PIR + ultrasonic sensors | ✅ Both read clean; confirmation filter proven (HW-416A PIR, HC-SR04 w/ 1kΩ series on ECHO) |
 | 5 | State machine | ✅ Real sensors in, real outputs out (CANIS_Core.ino): treat dispense + CORRECTION buzzer cue + reward cooldown/cap. Only "orient toward zone" waits on motors |
-| 6 | Vision / detection | 🟡 Pi prepped (opencv-contrib 4.13 + ArUco verified); waiting on USB webcam + command channel |
+| 6 | Vision / detection | 🟡 Pi→ESP32 command channel built + tested (/detect, /command, ESP32 polls); ArUco script ready (vision/detect.py); only live capture waits on the USB webcam |
 | 7 | Dashboard | ✅ Live ESP32→Pi link + simulator fallback; auto-starts on boot (systemd) |
 | 8 | Power & reliability | ⬜ Not started |
 | 9 | Full integration test | ⬜ Not started |
