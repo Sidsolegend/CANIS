@@ -161,5 +161,8 @@ def ingest():
 
 
 if __name__ == "__main__":
-    # host=0.0.0.0 so the ESP32 and your phone on the same WiFi can reach it
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    import os
+    # host=0.0.0.0 so the ESP32 and your phone on the same WiFi can reach it.
+    # debug OFF by default (clean + safe for the systemd service); for local
+    # dev with auto-reload, run:  CANIS_DEBUG=1 python3 app.py
+    app.run(host="0.0.0.0", port=5000, debug=os.environ.get("CANIS_DEBUG") == "1")
