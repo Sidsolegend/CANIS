@@ -136,12 +136,14 @@ Open `http://<pi-ip>:5000` from your phone (same WiFi). With no ESP32 connected
 you'll see the simulator loop running.
 
 ### ESP32 ↔ Pi link
-1. In `State_Machine_WiFi/State_Machine_WiFi.ino`, fill in the top 3 lines:
+1. **Credentials:** copy `arduino_secrets.h.example` into each networked sketch
+   folder (`CANIS_Core/`, `State_Machine_WiFi/`) as `arduino_secrets.h` and fill in:
    ```cpp
-   const char* WIFI_SSID = "YOUR_WIFI_NAME";
-   const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";
-   const char* PI_HOST   = "192.168.1.50";   // Pi IP from `hostname -I`
+   #define SECRET_SSID    "YOUR_WIFI_NAME"      // 2.4GHz only
+   #define SECRET_PASS    "YOUR_WIFI_PASSWORD"
+   #define SECRET_PI_HOST "192.168.1.50"        // Pi IP from `hostname -I`
    ```
+   `arduino_secrets.h` is gitignored, so credentials never get committed.
 2. Pi, ESP32, and phone all on the **same WiFi**.
 3. Arduino IDE → Boards Manager → install **"esp32 by Espressif"** → select your ESP32
    board → Upload. Serial Monitor @ **115200**.
