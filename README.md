@@ -166,8 +166,8 @@ tube "throat" (one treat at the gate at a time) matters more than timing.
 | 3 | ESP32 ↔ Arduino serial | 🟡 DISPENSE command works (ESP32 GPIO13 → Arduino pin10, one-way); movement cmds wait on L298N |
 | 4 | PIR + ultrasonic sensors | ✅ Both read clean; confirmation filter proven (HW-416A PIR, HC-SR04 w/ 1kΩ series on ECHO) |
 | 5 | State machine | ✅ Real sensors in, real outputs out (CANIS_Core.ino): treat dispense + CORRECTION buzzer cue + reward cooldown/cap. Only "orient toward zone" waits on motors |
-| 6 | Vision / detection | ⬜ Likely Pi-camera fallback (cameras cloud-locked) |
-| 7 | Dashboard | 🟡 Skeleton done + ESP32→Pi live link working |
+| 6 | Vision / detection | 🟡 Pi prepped (opencv-contrib 4.13 + ArUco verified); waiting on USB webcam + command channel |
+| 7 | Dashboard | ✅ Live ESP32→Pi link + simulator fallback; auto-starts on boot (systemd) |
 | 8 | Power & reliability | ⬜ Not started |
 | 9 | Full integration test | ⬜ Not started |
 | 10 | Documentation | 🟡 This file |
