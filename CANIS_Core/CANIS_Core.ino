@@ -111,8 +111,8 @@ int interventionCount = 0;
 unsigned long lastRewardMs = 0;   // for the reward cooldown
 
 unsigned long lastPoll = 0;       // vision-command polling
-bool   visionActive = false;      // a fresh vision detection from the Pi
-String visionZone   = "";         // which zone the camera reported
+bool visionActive = false;        // a fresh vision detection from the Pi
+char visionZone[24] = "";         // which zone the camera reported (fixed buffer, no heap churn)
 
 void setup() {
   Serial.begin(115200);
@@ -267,7 +267,7 @@ void runStateBehavior(unsigned long now) {
         lastCorrectionAction = now;
         tone(BUZZER_PIN, CORRECTION_TONE_FREQ, CORRECTION_TONE_MS);  // disengage cue
         Serial.print("  [OUTPUT] correction cue (buzzer) + would orient toward zone");
-        if (visionZone.length()) { Serial.print(": "); Serial.print(visionZone); }  // vision tells us where
+        if (visionZone[0]) { Serial.print(": "); Serial.print(visionZone); }  // vision tells us where
         Serial.println();
       }
       break;
@@ -310,7 +310,7 @@ void logStatus(unsigned long now) {
 unsigned long postBackoffUntil = 0;   // if the Pi is unreachable, stop hammering it
 
 void reportToPi(unsigned long now) {
-  if (now < postBackoffUntil) return;          // backing off a dead Pi -> stay responsive
+  if ((long)(now - postBackoffUntil) < 0) return;   // rollover-safe: still backing off a dead Pi
   if (now - lastReport < REPORT_MS) return;
   lastReport = now;
   if (WiFi.status() != WL_CONNECTED) return;
@@ -342,7 +342,7 @@ void reportToPi(unsigned long now) {
 // remote detection that drives arousal just like the local sensors. Shares the
 // reportToPi back-off so an unreachable Pi never stalls the loop.
 void pollCommand(unsigned long now) {
-  if (now < postBackoffUntil) return;
+  if ((long)(now - postBackoffUntil) < 0) return;   // rollover-safe: shared dead-Pi backoff
   if (now - lastPoll < POLL_MS) return;
   lastPoll = now;
   if (WiFi.status() != WL_CONNECTED) return;
@@ -355,15 +355,16 @@ void pollCommand(unsigned long now) {
   http.setTimeout(300);
   int code = http.GET();
   if (code == 200) {
-    String body = http.getString();
+    String body = http.getString();   // transient, freed at end of call
     body.trim();
     bool wasActive = visionActive;
     if (body == "NONE" || body.length() == 0) {
       visionActive = false;
-      visionZone   = "";
+      visionZone[0] = '\0';
     } else {
       visionActive = true;
-      visionZone   = body;
+      strncpy(visionZone, body.c_str(), sizeof(visionZone) - 1);
+      visionZone[sizeof(visionZone) - 1] = '\0';
     }
     if (visionActive != wasActive) {
       if (visionActive) { Serial.print("  [VISION] dog in zone: "); Serial.println(visionZone); }
