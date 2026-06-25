@@ -63,7 +63,7 @@ const float DECAY_PER_SEC    = 12.0;    // bleed-off when nothing is detected
 const float TRIGGER_BUMP     = 25.0;    // manual 't' key bump (bench testing only)
 const float AROUSAL_ENTER    = 20.0;    // CALM -> AROUSAL above this
 const float CORRECTION_ENTER = 70.0;    // AROUSAL -> CORRECTION above this
-const unsigned long CALM_REWARD_MS = 15000;
+const unsigned long CALM_REWARD_MS = 30000;  // sustained-calm reward interval; keep >= REWARD_COOLDOWN_MS
 
 // NEW seam tunable: how fast a confirmed detection drives arousal UP. Must beat
 // DECAY_PER_SEC so presence climbs (here net +18/s while detected). Empirical —
@@ -255,7 +255,12 @@ void updateState() {
 void runStateBehavior(unsigned long now) {
   switch (state) {
     case CALM:
-      if (now - calmSince >= CALM_REWARD_MS && now - lastCalmReward >= CALM_REWARD_MS) {
+      // Don't reward calm until warm-up is over: during warm-up the PIR is
+      // masked, so we haven't truly been watching yet. Avoids a wasted treat
+      // ~15s after every boot. (The leaving-reward still works during warm-up,
+      // since the ultrasonic is trusted from the start.)
+      if (now - bootTime >= WARMUP_MS &&
+          now - calmSince >= CALM_REWARD_MS && now - lastCalmReward >= CALM_REWARD_MS) {
         reward("sustained calm");
         lastCalmReward = now;
       }
