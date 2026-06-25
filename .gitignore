@@ -1,0 +1,10 @@
+# Secrets — never commit WiFi/Pi credentials
+arduino_secrets.h
+
+# Python
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
