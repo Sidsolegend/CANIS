@@ -56,7 +56,7 @@ Open `stl/canis_all.stl`, **split to objects** in your slicer, and arrange/print
 | Deck / shelf | flat | no | 4 / 30 % |
 | Shell | open-side **down** | tree (paw + hopper rim) | 3 / 12–15 % |
 | Dispenser | hopper **up** | no | 3 / 20 % |
-| sensor_plate / castor / gate / lid | flat / as-modelled | no | 3 / 20 % |
+| sensor_plate / disc / castor / chute / lid | flat / as-modelled | no | 3 / 20 % |
 
 Export all:
 ```bash
