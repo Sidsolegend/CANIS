@@ -78,7 +78,8 @@ module deck(){
     for(p=POSTS) thruhole(p[0],p[1],m3p,-(skirt_h+1),post_h+1);                // shelf screws up into posts
     for(a=[45:90:359]) thruhole(castor_x+castor_bc/2*cos(a),castor_bc/2*sin(a),castor_hole,-(skirt_h+1),deck_t+1);
     for(sx=[-1,1],sy=[-1,1]) thruhole(axle_x+sx*16,sy*(deck_w/2-10),m3,-(skirt_h+1),deck_t+1);  // motor brackets
-    for(p=disp_pins()) thruhole(disp_x+p[0],p[1],m3,-(skirt_h+1),deck_t+1);                      // dispenser feet
+    for(p=disp_pins()) thruhole(disp_x+p[0],p[1],m3,-(skirt_h+1),deck_t+1);                      // funnel feet
+    for(p=sb_pins())   thruhole(p[0],p[1],m3,-(skirt_h+1),deck_t+1);                              // servo bracket feet
     for(c=[[55,0],[-40,0]]) translate([c[0],c[1],-(skirt_h+1)]) hull(){ thruhole(0,-10,7,0,skirt_h+deck_t+2); thruhole(0,10,7,0,skirt_h+deck_t+2);} // cable
   }
 }
@@ -94,32 +95,42 @@ module shelf(){
     // rear notch so the dispenser hopper passes through
     hull(){ translate([notch_x-1,0,-eps]) cylinder(r=notch_r,h=shelf_t+2*eps); translate([notch_x-40,0,-eps]) cylinder(r=notch_r,h=shelf_t+2*eps); }
     for(p=POSTS) thruhole(p[0],p[1],m3,-eps,shelf_t+eps);        // screw to standoffs
-    for(c=[[60,0],[-5,20],[-5,-20]]) thruhole(c[0],c[1],8,-eps,shelf_t+eps);  // wire pass-throughs
+    for(c=[[-5,0],[-5,30],[-5,-30]]) thruhole(c[0],c[1],8,-eps,shelf_t+eps);  // wire pass-throughs (tidy column)
   }
 }
 
-// ============================== DISPENSER ===================================
-gate_off = -(throat_d/2+18);                 // servo BEHIND throat
-function disp_pins()=[[14,0],[gate_off,9],[gate_off,-9]];
+// ============================== DISPENSER (clean funnel ONLY) ===============
+sb_y = 34;   // servo bracket sits beside the funnel (its own part, enclosed)
+function disp_pins()=[for(a=[90:120:359])[(throat_d/2+6)*cos(a),(throat_d/2+6)*sin(a)]];  // 3 feet
 module dispenser(){
   difference(){
     union(){
-      linear_extrude(4) hull(){ circle(d=throat_d+22); translate([gate_off,0]) offset(5) square([sg_l-2,sg_w-2],center=true); }  // peanut base
-      translate([0,0,4]) difference(){          // funnel
+      cylinder(d=throat_d+24,h=4);                      // round base
+      translate([0,0,4]) difference(){                  // funnel
         hull(){ rr(throat_d+2*hop_wall,throat_d+2*hop_wall,3,eps); translate([0,0,hop_h]) rr(hop_top,hop_top,6,eps); }
         translate([0,0,-eps]) hull(){ rr(throat_d,throat_d,2,eps); translate([0,0,hop_h+2*eps]) rr(hop_top-2*hop_wall,hop_top-2*hop_wall,4,eps);}
       }
-      translate([gate_off,0,4]) difference(){   // servo pocket tower
-        rr(sg_l+6,sg_w+6,2,sg_h+6);
-        translate([0,0,6]) rr(sg_l,sg_w,1,sg_h+2);
-        for(s=[-1,1]) translate([s*sg_tab/2,0,sg_h+4]) cylinder(d=sg_screw,h=8);
-      }
     }
-    translate([0,0,-eps]) cylinder(d=throat_d,h=6);
-    for(p=disp_pins()) thruhole(p[0],p[1],m3,-eps,4+eps);
+    translate([0,0,-eps]) cylinder(d=throat_d,h=6);     // clean throat
+    for(p=disp_pins()) thruhole(p[0],p[1],m3,-eps,4+2*eps);
   }
 }
-module gate(){ difference(){ hull(){ cylinder(d=10,h=3); translate([-gate_off,0,0]) cylinder(d=throat_d+6,h=3);} cylinder(d=5.6,h=10,$fn=6); translate([0,0,2]) cylinder(d=8,h=4);} }
+// servo holder — SEPARATE piece, screws to the deck beside the funnel
+module servo_bracket(){
+  difference(){
+    union(){
+      rr(sg_l+14,sg_w+10,3,4);
+      translate([0,0,4]) difference(){
+        rr(sg_l+6,sg_w+6,2,sg_h+8);
+        translate([0,0,6]) rr(sg_l,sg_w,1,sg_h+4);
+        for(s=[-1,1]) translate([s*sg_tab/2,0,sg_h+6]) cylinder(d=sg_screw,h=10);
+      }
+    }
+    for(sx=[-1,1]) translate([sx*(sg_l/2+4.5),0,-eps]) cylinder(d=m3,h=6);
+  }
+}
+function sb_pins()=[[disp_x-(sg_l/2+4.5),sb_y],[disp_x+(sg_l/2+4.5),sb_y]];
+module gate(){ difference(){ hull(){ cylinder(d=10,h=3); translate([sb_y,0,0]) cylinder(d=throat_d+6,h=3);} cylinder(d=5.6,h=10,$fn=6); translate([0,0,2]) cylinder(d=8,h=4);} }
 module lid(){ difference(){ union(){ cylinder(d=hop_top+6,h=3); translate([0,0,-5]) cylinder(d=hop_top-2*hop_wall-0.6,h=5.5);} translate([0,0,3]) scale([1,1,.4]) sphere(d=hop_top*.5);} }
 
 // ============================== CASTOR SPACER ===============================
@@ -151,9 +162,10 @@ module shell(){
     translate([0,0,-skirt_drop-2]) shell_body(-2*wall+0.4,-wall);                  // open bottom
     paw_holes();
     for(s=[-1,1]) translate([axle_x,s*(deck_w/2+shell_clr),0]) rotate([90,0,0]) cylinder(d=wheel_d+10,h=2*wall+6,center=true); // wheel arches
-    hull(){ translate([disp_x,0,body_h]) cylinder(d=hop_top+8,h=head_h,center=true); translate([disp_x+gate_off,0,body_h]) cylinder(d=sg_l+14,h=head_h,center=true);} // hopper opening
-    for(i=[-2:2]) translate([i*8,30,body_h-3]) cube([3.5,40,20],center=true);      // fan grille
-    translate([-deck_l/2-shell_clr-1.2,0,body_h*.4]) rotate([0,4,0]) rotate([90,0,90]) mirror([1,0,0]) linear_extrude(3.6) text("CANIS",size=13,halign="center",valign="center",font="Liberation Sans:style=Bold");
+    translate([disp_x,0,body_h]) cylinder(d=hop_top+8,h=head_h,center=true);       // hopper opening (funnel only)
+    for(i=[-2:2]) translate([i*8,40,body_h-3]) cube([3.5,40,20],center=true);       // fan grille
+    // CANIS — deep, clearly-readable deboss on the flat rear wall
+    translate([-deck_l/2-shell_clr-2,0,body_h*.42]) rotate([0,5,0]) rotate([90,0,90]) mirror([1,0,0]) linear_extrude(5) text("CANIS",size=15,halign="center",valign="center",font="Liberation Sans:style=Bold");
   }
 }
 
@@ -184,6 +196,7 @@ show_shell=true;
 module assembly(){
   color([.85,.85,.88]) deck();
   translate([disp_x,0,deck_t]) color([.55,.6,.65]) dispenser();
+  translate([disp_x,sb_y,deck_t]) color([.5,.55,.6]) servo_bracket();
   translate([castor_x,0,-castor_spacer_h]) color([.7,.7,.7]) castor();
   color([.1,.1,.1,.85]) translate([8,0,deck_t+eps]) rr(pi_l,pi_w,4,30);          // Pi ghost
   translate([0,0,deck_t+post_h]) color([.82,.84,.88]) shelf();                    // upper shelf
@@ -209,20 +222,36 @@ module tier_map(list,ox,plate_l,plate_w){
 module layout(){
   tier_map(LOWER,-(deck_l/2+15),deck_l,deck_w);
   translate([-(deck_l/2+15),0,0]){       // lower extras
-    color([.55,.75,.95,.95]) translate([disp_x,0,1]) linear_extrude(2.5) hull(){ circle(d=throat_d+22); translate([gate_off,0]) offset(5) square([sg_l-2,sg_w-2],center=true); }
+    color([.55,.75,.95,.95]) translate([disp_x,0,1]) cylinder(d=throat_d+24,h=2.5);       // funnel base
+    color([.6,.6,.65,.95]) translate([disp_x,sb_y,1]) rr(sg_l+14,sg_w+10,3,2.5);          // servo bracket
     for(sx=[-1,1],sy=[-1,1]) color([.2,.2,.2]) translate([axle_x+sx*16,sy*(deck_w/2-10),1]) cylinder(d=5,h=2.5);
   }
   tier_map(UPPER,(deck_l/2+15),shelf_l,shelf_w);
   translate([(deck_l/2+15),0,0]) color([.95,.55,.55,.8]) translate([notch_x+10,0,1]) cylinder(r=notch_r,h=2.5);   // notch
 }
 
+// every printable part laid flat on one plate -> a single combined STL to split
+module all_parts(){
+  deck();
+  translate([265,0,0]) shelf();
+  translate([0,225,0]) shell();
+  translate([255,210,0]) dispenser();
+  translate([320,210,0]) servo_bracket();
+  translate([380,210,0]) gate();
+  translate([255,290,0]) lid();
+  translate([330,290,0]) castor();
+  translate([400,290,0]) sensor_plate();
+}
+
 if(part=="deck") deck();
 else if(part=="shelf") shelf();
 else if(part=="shell") shell();
 else if(part=="dispenser") dispenser();
+else if(part=="servo_bracket") servo_bracket();
 else if(part=="gate") gate();
 else if(part=="lid") lid();
 else if(part=="castor") castor();
 else if(part=="sensor_plate") sensor_plate();
 else if(part=="layout") layout();
+else if(part=="all") all_parts();
 else assembly();

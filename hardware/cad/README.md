@@ -27,14 +27,23 @@ reusing the existing metal motor brackets.
 The layout is driven by the `LOWER` / `UPPER` lists at the top of `canis.scad`
 (`[name, sx, sy, cx, cy, mount]`). Both tiers share the **same 4 standoff positions**.
 
-## Parts (8) — `part = "<name>"`
+## One combined file — `stl/canis_all.stl`
+
+`part = "all"` lays **every part flat on one plate** and exports a single STL.
+Open `stl/canis_all.stl`, **split to objects** in your slicer, and arrange/print.
+(Individual `stl/<part>.stl` files are also provided.)
+
+![all parts](preview/t2_all.png)
+
+## Parts (9) — `part = "<name>"`
 
 | Part | Notes |
 |------|-------|
 | `deck` | Lower plate (4 mm + skirt, **no ribs**). Pi cradle, board standoffs, 4 shelf standoffs, throat, cable/motor/castor holes. |
 | `shelf` | Upper plate. Board mounts + rear **notch** for the funnel + corner screw holes. |
 | `shell` | Dome enclosure: paw holes, wheel arches, fan grille, hopper opening, rear CANIS logo, 2 sensor-plate bosses. |
-| `dispenser` | Funnel + servo tower on one clean peanut base; tripod feet. |
+| `dispenser` | **Clean funnel only** → round throat + 3 feet (no servo tower fighting the throat). |
+| `servo_bracket` | **Separate** SG90 holder; sits beside the funnel, enclosed under the shell. |
 | `gate` | Paddle on the SG90 horn (releases ~one 8 mm kibble). |
 | `lid` | Flush hopper cap. |
 | `castor` | 9 mm leveling spacer for the 25 mm castor. |
@@ -52,7 +61,8 @@ The layout is driven by the `LOWER` / `UPPER` lists at the top of `canis.scad`
 Export all:
 ```bash
 cd hardware/cad
-for p in deck shelf shell dispenser gate lid castor sensor_plate; do
+openscad --export-format binstl -D 'part="all"' -o stl/canis_all.stl canis.scad   # one combined file
+for p in deck shelf shell dispenser servo_bracket gate lid castor sensor_plate; do
   openscad --export-format binstl -D "part=\"$p\"" -o "stl/$p.stl" canis.scad
 done
 ```
