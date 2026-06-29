@@ -4,6 +4,8 @@ Clean rebuild as a **two-tier** robot so everything fits on a compact footprint
 (**205 × 165 mm**) instead of one big flat deck. Parametric OpenSCAD, Bambu P1S / PLA,
 reusing the existing metal motor brackets.
 
+➡️ **Building it? See [BUILD_GUIDE.md](BUILD_GUIDE.md)** — BOM, PLA print settings, and step-by-step assembly.
+
 - **Lower deck** — Raspberry Pi 5, L298N, LM2596 buck, motors, castor, dispenser.
 - **Upper shelf** (on 4 standoffs) — Arduino, breadboard, ESP32. A rear **notch**
   lets the dispenser funnel pass up through it.
