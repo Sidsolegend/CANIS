@@ -23,8 +23,8 @@ $fn = 48;
 // ----------------------------------------------------------------------------
 //  CORE DIMENSIONS
 // ----------------------------------------------------------------------------
-deck_l       = 240;   // front<->back  (sized so every pad/cradle/tower clears)
-deck_w       = 185;   // left<->right
+deck_l       = 248;   // front<->back  (sized so every pad/cradle/tower clears)
+deck_w       = 190;   // left<->right
 deck_t       = 3.4;   // plate thickness (load-bearing; ribbed underneath)
 deck_fillet  = 12;
 skirt_h      = 9;     // perimeter rib depth (stiffens the plate)
@@ -89,7 +89,7 @@ m3_clr = 3.3; m3_pilot = 2.8; zip_w = 4; zip_g = 2.2;
 //  COMPONENT LAYOUT  — single source of truth for what sits where.
 //  [ name, size_x, size_y, centre_x, centre_y, mount ]
 //  mount: "cradle" Pi · "board" pad+corner bosses+zip · "stick" pad+lip (taped)
-//  Verified collision-free on the 240x185 deck — the `layout` view draws the
+//  Verified collision-free on the 248x190 deck — the `layout` view draws the
 //  REAL pad/cradle/dispenser outlines (not bare footprints) so overlaps show.
 // ----------------------------------------------------------------------------
 COMPONENTS = [
@@ -107,36 +107,32 @@ COMPONENTS = [
 //  HELPERS
 // ----------------------------------------------------------------------------
 module rrect(l,w,r,h){ linear_extrude(h) offset(r) square([max(.01,l-2*r),max(.01,w-2*r)],center=true); }
-module bolt(x,y,d,t){ translate([x,y,-1]) cylinder(d=d,h=t+2); }
+// cut full depth (through plate AND any rib below) so nothing blocks a hole/screw
+module bolt(x,y,d,t){ translate([x,y,-(skirt_h+2)]) cylinder(d=d,h=skirt_h+t+4); }
 
 // shared hole patterns (deck <-> bolt-on parts) -----------------------------
 castor_x = -deck_l/2 + 20;
 function castor_holes()=[for(a=[45:90:359])[castor_x+castor_bc/2*cos(a),castor_bc/2*sin(a)]];
-disp_x   = -deck_l/2 + 50;   // throat position (base + tower fit behind it)
-function disp_holes_local()=[for(sx=[-1,1],sy=[-1,1])[disp_base_off+sx*(disp_base_l/2-7),sy*(disp_base_w/2-7)]];
+disp_x   = -deck_l/2 + 46;   // throat position (base + tower fit behind it, clear of Pi)
+function disp_holes_local()=[[14,0],[gate_axis_x,9],[gate_axis_x,-9]];  // tripod: funnel + tower lobes
 function motor_holes()=[for(sx=[-1,1],sy=[-1,1])[axle_x+sx*16,sy*(deck_w/2-10)]];
 // shell screw bosses in verified-clear perimeter gaps (front gap, 2 rear, 2 sides)
 function shell_holes()=[[116,6],[-118,60],[-118,-60],[0,90],[0,-90]];
 
-// a universal board pad: locates + raises a board, bolt OR zip-tie -----------
+// board mount = 4 open standoffs (board bolts on / tapes; deck stays open under it)
 pad_h = 5;
 module board_pad(sx,sy){
-    difference(){
-        union(){
-            rrect(sx,sy,3,2);                                   // thin pad
-            for(ix=[-1,1],iy=[-1,1])                            // 4 corner bosses
-                translate([ix*(sx/2-5),iy*(sy/2-5),0]) cylinder(d=6,h=pad_h);
+    for(ix=[-1,1],iy=[-1,1])
+        translate([ix*(sx/2-4),iy*(sy/2-4),0]) difference(){
+            cylinder(d=6.5,h=pad_h);
+            translate([0,0,-1]) cylinder(d=m3_pilot,h=pad_h+2);
         }
-        for(ix=[-1,1],iy=[-1,1])
-            translate([ix*(sx/2-5),iy*(sy/2-5),-1]) cylinder(d=m3_pilot,h=pad_h+2);
-        for(sgn=[-1,1]) for(o=[-1,1])                           // zip-tie slot pairs
-            translate([sgn*(sx/2-9), o*4, -1]) cube([zip_w,zip_g,8],center=true);
-    }
 }
-module stick_pad(sx,sy){   // for adhesive-backed parts (breadboard): pad + lip
+// breadboard locator = a thin perimeter lip only (open centre; board adheres to deck)
+module stick_pad(sx,sy){
     difference(){
-        rrect(sx+5,sy+5,4,2.4);
-        translate([0,0,1.4]) rrect(sx,sy,2,4);                 // recess the board drops into
+        rrect(sx+5,sy+5,4,2.6);
+        translate([0,0,-1]) rrect(sx+0.8,sy+0.8,2,5);          // hollow -> open centre
     }
 }
 module place_mounts(){
@@ -160,8 +156,8 @@ module deck(){
                     rrect(deck_l,deck_w,deck_fillet,skirt_h);
                     translate([0,0,-1]) rrect(deck_l-2*skirt_t,deck_w-2*skirt_t,max(.5,deck_fillet-skirt_t),skirt_h+2);
                 }
-            for(rx=[-70,-12,46])                                          // transverse ribs
-                translate([rx,0,-(skirt_h-deck_t)]) cube([2.6,deck_w-2*skirt_t,skirt_h],center=false?false:true);
+            for(rx=[-100,-45,15,85])                                      // transverse ribs (clear of throat)
+                translate([rx,0,-(skirt_h-deck_t)]) cube([2.6,deck_w-2*skirt_t,skirt_h],center=true);
             // Pi case cradle (drop-in fence, long axis along X)
             translate([pi_x,pi_y,deck_t]) difference(){
                 rrect(pi_case_l+2*cradle_wall+2*case_clr,pi_case_w+2*cradle_wall+2*case_clr,5,cradle_h);
@@ -175,10 +171,10 @@ module deck(){
         for(p=disp_holes_local()) bolt(disp_x+p[0],p[1],m3_clr,deck_t);
         for(p=motor_holes())  bolt(p[0],p[1],m3_clr,deck_t);
         for(p=shell_holes())  bolt(p[0],p[1],m3_clr,deck_t);              // shell screws from below
-        translate([disp_x,0,-1]) cylinder(d=throat_d+4,h=deck_t+2);       // treats fall through
-        // cable pass-throughs between zones
-        for(cx=[-52,40], cy=[-30,30]) translate([cx,cy,-1]) hull(){
-            translate([0,-9,0]) cylinder(d=7,h=deck_t+2); translate([0,9,0]) cylinder(d=7,h=deck_t+2); }
+        translate([disp_x,0,-(skirt_h+2)]) cylinder(d=throat_d+4,h=skirt_h+deck_t+4);   // treats fall clean through
+        // cable pass-throughs in the OPEN gaps fore & aft of the Pi (clear of the cradle)
+        for(c=[[54,0],[-55,0]]) translate([c[0],c[1],-(skirt_h+2)]) hull(){
+            translate([0,-10,0]) cylinder(d=7,h=skirt_h+deck_t+4); translate([0,10,0]) cylinder(d=7,h=skirt_h+deck_t+4); }
     }
 }
 
@@ -189,7 +185,11 @@ gate_axis_x = -(throat_d/2 + 18);   // servo tower BEHIND the throat (clears fun
 module dispenser(){
     difference(){
         union(){
-            translate([disp_base_off,0,0]) rrect(disp_base_l,disp_base_w,6,disp_base_t);
+            // base: ONE clean peanut covering the funnel lobe + the tower lobe
+            linear_extrude(disp_base_t) hull(){
+                circle(d=throat_d+22);
+                translate([gate_axis_x,0]) offset(5) square([sg_body_l-2,sg_body_w-2],center=true);
+            }
             translate([0,0,disp_base_t]) difference(){    // funnel hopper over the throat
                 hull(){ rrect(throat_d+2*hop_wall,throat_d+2*hop_wall,3,1);
                         translate([0,0,hop_h-1]) rrect(hop_top,hop_top,6,1); }
@@ -271,21 +271,16 @@ module front_face(){   // the PAW — recessed bezel + apertures sized to the re
         translate([0,0,paw_pir_z]) rotate([0,90,0]) cylinder(d=pir_dome_d,h=30,center=true);
     }
 }
-// internal mounts behind the paw — real holders sized to each board ------------
+// internal mounts behind the paw — MINIMAL, far apart, can't touch:
+//   camera = 4 standoffs up top · PIR = one ring at the bottom · ultrasonic = its two
+//   cans push through the snug bean holes (held by the holes + a dab of glue; no rails).
 module sensor_mounts(){
     translate([head_front_x,0,face_cz]) rotate([0,-14,0]){
-        // HC-SR04 retainer frame (PCB drops into this picture-frame)
-        translate([-shell_wall-3,0,paw_us_z]) difference(){
-            cube([6, us_pcb_w+7, us_pcb_h+7], center=true);
-            cube([9, us_pcb_w+0.8, us_pcb_h+0.8], center=true);
-        }
-        // camera standoffs (M2) at its mount-hole pitch
-        for(sy=[-1,1],sz=[-1,1])
+        for(sy=[-1,1],sz=[-1,1])                                   // camera standoffs (top)
             translate([-shell_wall-3, sy*cam_hole_x/2, paw_cam_z+sz*cam_hole_y/2]) rotate([0,90,0])
                 difference(){ cylinder(d=5,h=6,center=true); cylinder(d=1.6,h=8,center=true); }
-        // PIR retaining ring (lens housing presses into this)
-        translate([-shell_wall-3,0,paw_pir_z]) rotate([0,90,0])
-            difference(){ cylinder(d=pir_dome_d+6,h=6,center=true); cylinder(d=pir_dome_d+0.8,h=9,center=true); }
+        translate([-shell_wall-3,0,paw_pir_z]) rotate([0,90,0])      // PIR ring (bottom)
+            difference(){ cylinder(d=pir_dome_d+5,h=6,center=true); cylinder(d=pir_dome_d+0.8,h=9,center=true); }
     }
 }
 // ghost PCBs — to PROVE the three boards fit behind the paw without colliding
@@ -358,9 +353,10 @@ module layout(){
     color([.9,.9,.92]) deck();
     // dispenser: real base + servo tower + funnel mouth
     color([.55,.75,.95,.9]) translate([disp_x,0,deck_t+0.2]){
-        translate([disp_base_off,0,0]) rrect(disp_base_l,disp_base_w,4,1);   // base
-        translate([gate_axis_x,0,0.1]) rrect(sg_body_l+6,sg_body_w+6,2,1.2); // servo tower
-        translate([0,0,0.1]) circle(d=throat_d+4);                            // throat (deck-level)
+        linear_extrude(1) hull(){ circle(d=throat_d+22);                      // real peanut base
+            translate([gate_axis_x,0]) offset(5) square([sg_body_l-2,sg_body_w-2],center=true); }
+        translate([gate_axis_x,0,1.1]) rrect(sg_body_l+6,sg_body_w+6,2,1.2);  // servo tower
+        translate([0,0,1.1]) circle(d=throat_d+4);                            // throat
     }
     color([.8,.8,.8,.7]) translate([castor_x,0,deck_t+0.2]) circle(d=40);
     for(p=motor_holes()) color([.2,.2,.2]) translate([p[0],p[1],deck_t]) cylinder(d=5,h=1.2);

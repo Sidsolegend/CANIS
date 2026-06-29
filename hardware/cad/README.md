@@ -23,18 +23,18 @@ supported home, verified collision-free (see the layout map and the sensor-fit v
 | Component | Footprint (mm) | How it mounts | Where |
 |-----------|----------------|---------------|-------|
 | **Raspberry Pi 5** (CanaKit case) | 92 × 63 | drop-in **cradle** (fence w/ port gaps) | centre |
-| **Arduino Uno** | 68 × 53 | board pad + 4 corner bosses (M3) / zip-tie | front-right |
-| **Breadboard** (half) | 84 × 55 | recessed pad + lip (adhesive-backed) | front-left |
-| **L298N** motor driver | 44 × 44 | board pad + 4 bosses | left lane |
-| **ESP32** DevKit V1 | 56 × 29 | board pad + zip-tie | centre-rear |
-| **LM2596** buck converter | 44 × 22 | board pad + zip-tie | rear-left |
+| **Arduino Uno** | 68 × 53 | 4 open standoffs (M3) — deck stays open underneath for wiring | front-right |
+| **Breadboard** (half) | 84 × 55 | perimeter lip locator (adhesive-backed, open centre) | front-left |
+| **L298N** motor driver | 44 × 44 | 4 open standoffs | left lane |
+| **ESP32** DevKit V1 | 56 × 29 | 4 open standoffs | centre-rear |
+| **LM2596** buck converter | 44 × 22 | 4 open standoffs | rear-left |
 | **2× DC gearmotors** | 39 × 40 | existing metal brackets → deck holes | mid axle |
 | **SG90 servo** | — | inside the dispenser tower | rear |
 | **Camera + 2x ultrasonic + PIR** | — | behind the front **paw** (camera=top pad, ultrasonic=beans, PIR=main pad) | front |
 | **2× buzzer · button · 1 kΩ · capacitors** | small | on the **breadboard** | front-left |
 | **Battery / power bank** (later) | — | drops into the open central floor | centre |
 
-Every board pad **raises the board ~5 mm** so wiring routes underneath, and the deck
+Every board sits on **4 open 5 mm standoffs** so wiring routes underneath, and the deck
 has **cable pass-through slots** between zones plus a wire exit behind the Pi.
 
 ### Layout is parametric
@@ -49,7 +49,7 @@ Behind the front paw the shell carries actual holders, sized to each board:
 
 | Sensor | Aperture | Holder behind it |
 |--------|----------|------------------|
-| **HC-SR04** ultrasonic (45×20) | the two 16 mm beans (26 mm pitch) | drop-in picture-frame the PCB seats into |
+| **HC-SR04** ultrasonic (45×20) | the two 16 mm beans (26 mm pitch) | its two cans press through the snug bean holes (+ a dab of glue) — no rails to clutter |
 | **HC-SR501** PIR (33×25) | 23.6 mm main pad | retaining ring the lens housing presses into |
 | **Camera** (~25×24) | 9 mm aperture | 4 M2 standoffs at its mount-hole pitch |
 
@@ -96,7 +96,7 @@ PCBs in place to prove the fit (`preview/sensors_front.png`):
 | Dispenser | hopper opening **up** | no (PLA bridges the throat) | 3 / 20 % |
 | Castor / gate / lid | as modelled | no | 3 / 20 % |
 
-Deck ≈ 240 × 185 mm and the shell ≈ 120 mm tall printed this way — both well inside
+Deck ≈ 248 × 190 mm and the shell ≈ 120 mm tall printed this way — both well inside
 the P1S 256³ envelope. Print the shell in **matte PLA** and the faceting disappears —
 it looks injection-moulded.
 
