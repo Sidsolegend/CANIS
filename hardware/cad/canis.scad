@@ -142,15 +142,13 @@ module chute(){         // flat flange bolts under the deck at the exit; trough 
     union(){
       translate([0,0,-1.5]) rr(flg, pocket_d+10, 3, 3);                  // flange (top face against deck underside)
       hull(){                                                            // trough body, sloping rear & down
-        translate([0,0,-1.5]) cylinder(d=pocket_d+6,h=eps);
-        translate([-46,0,-30]) cylinder(d=pocket_d+6,h=eps);
+        translate([0,0,-1.5]) cylinder(d=pocket_d+8,h=eps);
+        translate([-46,0,-30]) cylinder(d=pocket_d+8,h=eps);
       }
     }
-    hull(){                                                              // treat channel (hollow)
-      translate([0,0,-1.5-eps]) cylinder(d=pocket_d+2,h=eps);
-      translate([-46,0,-29]) cylinder(d=pocket_d+2,h=eps);
-    }
-    translate([0,0,-4]) cylinder(d=pocket_d+2,h=6);                      // inlet (aligns with deck exit hole)
+    // ONE continuous channel: straight vertical entry (lines up with the inlet) -> bend -> angled exit
+    hull(){ translate([0,0,2]) cylinder(d=pocket_d+3,h=eps); translate([0,0,-7]) cylinder(d=pocket_d+3,h=eps); }      // vertical entry
+    hull(){ translate([0,0,-7]) cylinder(d=pocket_d+3,h=eps); translate([-46,0,-29]) cylinder(d=pocket_d+2,h=eps); }  // angled run
     for(s=[-1,1]) translate([s*chute_mt,0,-4]) cylinder(d=m3,h=6);       // mount holes (match deck)
   }
 }
