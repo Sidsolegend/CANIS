@@ -42,9 +42,9 @@ Open `stl/canis_all.stl`, **split to objects** in your slicer, and arrange/print
 | `deck` | Lower plate (4 mm + skirt, **no ribs**). Pi cradle, board standoffs, 4 shelf standoffs, throat, cable/motor/castor holes. |
 | `shelf` | Upper plate. Board mounts + rear **notch** for the funnel + corner screw holes. |
 | `shell` | Dome enclosure: paw holes, wheel arches, fan grille, hopper opening, rear CANIS logo, 2 sensor-plate bosses. |
-| `dispenser` | **Clean funnel only** → round throat + 3 feet (no servo tower fighting the throat). |
-| `servo_bracket` | **Separate** SG90 holder; sits beside the funnel, enclosed under the shell. |
-| `gate` | Paddle on the SG90 horn (releases ~one 8 mm kibble). |
+| `dispenser` | **Rotating-disc** housing + funnel. The SG90 stands upright *inside*, shaft up; the disc sits on its shaft. Funnel feeds the −x inlet; treat drops the +x exit. |
+| `disc` | Rotating disc with **one pocket** + centre horn socket. Pocket fills under the funnel, rotates 180°, drops the kibble down the exit. |
+| `chute` | Bolts under the deck at the exit; slides the kibble out at floor level. |
 | `lid` | Flush hopper cap. |
 | `castor` | 9 mm leveling spacer for the 25 mm castor. |
 | `sensor_plate` | **Modular** flat plate: camera standoffs + ultrasonic can-holes + PIR ring. Populate on the bench, screw into the head. |
@@ -62,7 +62,7 @@ Export all:
 ```bash
 cd hardware/cad
 openscad --export-format binstl -D 'part="all"' -o stl/canis_all.stl canis.scad   # one combined file
-for p in deck shelf shell dispenser servo_bracket gate lid castor sensor_plate; do
+for p in deck shelf shell dispenser disc chute lid castor sensor_plate; do
   openscad --export-format binstl -D "part=\"$p\"" -o "stl/$p.stl" canis.scad
 done
 ```

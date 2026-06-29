@@ -34,10 +34,13 @@ UPPER = [
   ["ESP32",       56, 29,    30,   0, "board"],
 ];
 
-// ---- dispenser / sensors / drive ----
-throat_d=15; hop_top=56; hop_h=70; hop_wall=2;
-disp_x = -72;                                // throat on the deck (rear)
+// ---- dispenser (rotating disc) / sensors / drive ----
+hop_top=54; hop_h=60; hop_wall=2;
+disc_d=46; pocket_d=11; pocket_r=14; disc_th=6;   // 8mm kibble -> 11mm pocket
+disp_x = -72;                                // disc/servo axis on the deck (rear)
 sg_l=23; sg_w=12.5; sg_h=23; sg_tab=32; sg_screw=2.4;
+disc_z = 4 + sg_h + 1;                        // disc sits just above the upright servo
+inlet=[-pocket_r,0]; exitp=[pocket_r,0];     // funnel feeds -x side; treat exits +x side
 us_eye_d=16.2; us_pitch=26; pir_d=23.6; cam_d=9; cam_hx=21; cam_hy=12.5; cam_s=2.2;
 wheel_d=68; wheel_t=26; axle_x=22; track=deck_w+12;
 castor_x=-deck_l/2+18; castor_bc=24; castor_hole=4.3; castor_spacer_h=9;
@@ -78,8 +81,8 @@ module deck(){
     for(p=POSTS) thruhole(p[0],p[1],m3p,-(skirt_h+1),post_h+1);                // shelf screws up into posts
     for(a=[45:90:359]) thruhole(castor_x+castor_bc/2*cos(a),castor_bc/2*sin(a),castor_hole,-(skirt_h+1),deck_t+1);
     for(sx=[-1,1],sy=[-1,1]) thruhole(axle_x+sx*16,sy*(deck_w/2-10),m3,-(skirt_h+1),deck_t+1);  // motor brackets
-    for(p=disp_pins()) thruhole(disp_x+p[0],p[1],m3,-(skirt_h+1),deck_t+1);                      // funnel feet
-    for(p=sb_pins())   thruhole(p[0],p[1],m3,-(skirt_h+1),deck_t+1);                              // servo bracket feet
+    for(p=disp_pins()) thruhole(disp_x+p[0],p[1],m3,-(skirt_h+1),deck_t+1);                      // dispenser feet
+    thruhole(exit_x,0,pocket_d+2,-(skirt_h+1),deck_t+1);                                          // treat exit (drops to chute below)
     for(c=[[55,0],[-40,0]]) translate([c[0],c[1],-(skirt_h+1)]) hull(){ thruhole(0,-10,7,0,skirt_h+deck_t+2); thruhole(0,10,7,0,skirt_h+deck_t+2);} // cable
   }
 }
@@ -99,38 +102,48 @@ module shelf(){
   }
 }
 
-// ============================== DISPENSER (clean funnel ONLY) ===============
-sb_y = 34;   // servo bracket sits beside the funnel (its own part, enclosed)
-function disp_pins()=[for(a=[90:120:359])[(throat_d/2+6)*cos(a),(throat_d/2+6)*sin(a)]];  // 3 feet
-module dispenser(){
+// ============================== DISPENSER (rotating disc) ===================
+//  HOW IT WORKS: the SG90 stands UPRIGHT inside the round housing, shaft pointing
+//  up. The DISC snaps on the shaft. The funnel feeds kibble onto the -x side
+//  (inlet); the disc's pocket grabs one, rotates 180deg, and drops it through the
+//  +x exit hole -> down past the servo -> through the deck -> out the CHUTE.
+function disp_pins()=[for(a=[90:120:359])[(disc_d/2+6)*cos(a),(disc_d/2+6)*sin(a)]];  // 3 feet
+exit_x = disp_x + pocket_r;                        // where the treat drops through the deck
+disp_top = disc_z + disc_th + 3;
+module dispenser(){      // housing + funnel (servo + disc go INSIDE)
   difference(){
     union(){
-      cylinder(d=throat_d+24,h=4);                      // round base
-      translate([0,0,4]) difference(){                  // funnel
-        hull(){ rr(throat_d+2*hop_wall,throat_d+2*hop_wall,3,eps); translate([0,0,hop_h]) rr(hop_top,hop_top,6,eps); }
-        translate([0,0,-eps]) hull(){ rr(throat_d,throat_d,2,eps); translate([0,0,hop_h+2*eps]) rr(hop_top-2*hop_wall,hop_top-2*hop_wall,4,eps);}
+      cylinder(d=disc_d+11, h=disp_top);                                  // round housing
+      translate([0,0,disp_top-eps]) difference(){                         // funnel: mouth centred, throat over the inlet
+        hull(){ translate(inlet) cylinder(d=pocket_d+2*hop_wall,h=eps); translate([0,0,hop_h]) rr(hop_top,hop_top,6,eps);}
+        hull(){ translate(inlet) translate([0,0,-eps]) cylinder(d=pocket_d,h=eps); translate([0,0,hop_h+eps]) rr(hop_top-2*hop_wall,hop_top-2*hop_wall,4,eps);}
       }
     }
-    translate([0,0,-eps]) cylinder(d=throat_d,h=6);     // clean throat
-    for(p=disp_pins()) thruhole(p[0],p[1],m3,-eps,4+2*eps);
+    translate([-6,0,2+(sg_h+3)/2]) cube([sg_l+1.5,sg_w+1.5,sg_h+3],center=true);   // servo body cavity (shaft ~centre, body toward -x)
+    cylinder(d=10,h=disp_top+2,center=true);                              // shaft clearance up the centre
+    translate([0,0,disc_z-0.5]) cylinder(d=disc_d+1.5,h=disc_th+1);       // disc chamber
+    translate(inlet) translate([0,0,disc_z+disc_th-eps]) cylinder(d=pocket_d+1,h=5);     // inlet (funnel -> chamber)
+    translate(exitp) translate([0,0,-eps]) cylinder(d=pocket_d+1, h=disc_z+1);           // exit (chamber -> down through deck)
+    for(p=disp_pins()) translate([p[0],p[1],-eps]) cylinder(d=m3,h=8);
   }
 }
-// servo holder — SEPARATE piece, screws to the deck beside the funnel
-module servo_bracket(){
+module disc(){          // one through-pocket; snaps on the SG90 horn
   difference(){
-    union(){
-      rr(sg_l+14,sg_w+10,3,4);
-      translate([0,0,4]) difference(){
-        rr(sg_l+6,sg_w+6,2,sg_h+8);
-        translate([0,0,6]) rr(sg_l,sg_w,1,sg_h+4);
-        for(s=[-1,1]) translate([s*sg_tab/2,0,sg_h+6]) cylinder(d=sg_screw,h=10);
-      }
-    }
-    for(sx=[-1,1]) translate([sx*(sg_l/2+4.5),0,-eps]) cylinder(d=m3,h=6);
+    cylinder(d=disc_d, h=disc_th);
+    translate([pocket_r,0,-eps]) cylinder(d=pocket_d, h=disc_th+2);       // metering pocket
+    cylinder(d=5.8,h=disc_th+2,$fn=6);                                    // horn cross-socket (trim to fit)
+    translate([0,0,disc_th-2.5]) cylinder(d=9,h=3);                       // horn body recess
   }
 }
-function sb_pins()=[[disp_x-(sg_l/2+4.5),sb_y],[disp_x+(sg_l/2+4.5),sb_y]];
-module gate(){ difference(){ hull(){ cylinder(d=10,h=3); translate([sb_y,0,0]) cylinder(d=throat_d+6,h=3);} cylinder(d=5.6,h=10,$fn=6); translate([0,0,2]) cylinder(d=8,h=4);} }
+chute_len=60;
+module chute(){         // bolts under the deck at the exit; slides the treat out the rear at floor level
+  rotate([0,28,0]) difference(){
+    rr(chute_len,pocket_d+9,3,pocket_d+7);
+    translate([0,0,3]) rr(chute_len+2,pocket_d+3,2,pocket_d+8);           // channel
+    translate([chute_len/2-7,0,-eps]) cylinder(d=m3,h=6);                 // mount tab
+    translate([-(chute_len/2-7),0,-eps]) cylinder(d=m3,h=6);
+  }
+}
 module lid(){ difference(){ union(){ cylinder(d=hop_top+6,h=3); translate([0,0,-5]) cylinder(d=hop_top-2*hop_wall-0.6,h=5.5);} translate([0,0,3]) scale([1,1,.4]) sphere(d=hop_top*.5);} }
 
 // ============================== CASTOR SPACER ===============================
@@ -196,7 +209,9 @@ show_shell=true;
 module assembly(){
   color([.85,.85,.88]) deck();
   translate([disp_x,0,deck_t]) color([.55,.6,.65]) dispenser();
-  translate([disp_x,sb_y,deck_t]) color([.5,.55,.6]) servo_bracket();
+  translate([disp_x,0,deck_t+disc_z]) color([.85,.5,.2]) disc();                  // rotating disc
+  color([.1,.1,.1,.7]) translate([disp_x-6,0,deck_t+3]) cube([sg_l,sg_w,sg_h],center=false?false:true);   // servo ghost (inside)
+  translate([exit_x,0,deck_t-2]) color([.6,.6,.65]) chute();                       // exit chute (under deck)
   translate([castor_x,0,-castor_spacer_h]) color([.7,.7,.7]) castor();
   color([.1,.1,.1,.85]) translate([8,0,deck_t+eps]) rr(pi_l,pi_w,4,30);          // Pi ghost
   translate([0,0,deck_t+post_h]) color([.82,.84,.88]) shelf();                    // upper shelf
@@ -222,8 +237,8 @@ module tier_map(list,ox,plate_l,plate_w){
 module layout(){
   tier_map(LOWER,-(deck_l/2+15),deck_l,deck_w);
   translate([-(deck_l/2+15),0,0]){       // lower extras
-    color([.55,.75,.95,.95]) translate([disp_x,0,1]) cylinder(d=throat_d+24,h=2.5);       // funnel base
-    color([.6,.6,.65,.95]) translate([disp_x,sb_y,1]) rr(sg_l+14,sg_w+10,3,2.5);          // servo bracket
+    color([.55,.75,.95,.95]) translate([disp_x,0,1]) cylinder(d=disc_d+11,h=2.5);         // dispenser housing
+    color([.85,.5,.2]) translate([exit_x,0,1.1]) cylinder(d=pocket_d+2,h=2.5);            // treat exit
     for(sx=[-1,1],sy=[-1,1]) color([.2,.2,.2]) translate([axle_x+sx*16,sy*(deck_w/2-10),1]) cylinder(d=5,h=2.5);
   }
   tier_map(UPPER,(deck_l/2+15),shelf_l,shelf_w);
@@ -236,19 +251,19 @@ module all_parts(){
   translate([265,0,0]) shelf();
   translate([0,225,0]) shell();
   translate([255,210,0]) dispenser();
-  translate([320,210,0]) servo_bracket();
-  translate([380,210,0]) gate();
-  translate([255,290,0]) lid();
-  translate([330,290,0]) castor();
-  translate([400,290,0]) sensor_plate();
+  translate([330,210,0]) disc();
+  translate([380,210,0]) chute();
+  translate([255,300,0]) lid();
+  translate([330,300,0]) castor();
+  translate([400,300,0]) sensor_plate();
 }
 
 if(part=="deck") deck();
 else if(part=="shelf") shelf();
 else if(part=="shell") shell();
 else if(part=="dispenser") dispenser();
-else if(part=="servo_bracket") servo_bracket();
-else if(part=="gate") gate();
+else if(part=="disc") disc();
+else if(part=="chute") chute();
 else if(part=="lid") lid();
 else if(part=="castor") castor();
 else if(part=="sensor_plate") sensor_plate();
