@@ -23,8 +23,8 @@ $fn = 48;
 // ----------------------------------------------------------------------------
 //  CORE DIMENSIONS
 // ----------------------------------------------------------------------------
-deck_l       = 230;   // front<->back  (sized so EVERY board fits one layer)
-deck_w       = 175;   // left<->right  (wide enough that no pad overhangs the edge)
+deck_l       = 240;   // front<->back  (sized so every pad/cradle/tower clears)
+deck_w       = 185;   // left<->right
 deck_t       = 3.4;   // plate thickness (load-bearing; ribbed underneath)
 deck_fillet  = 12;
 skirt_h      = 9;     // perimeter rib depth (stiffens the plate)
@@ -34,7 +34,7 @@ skirt_t      = 2.6;
 // --- Raspberry Pi 5 in CanaKit case -----------------------------------------
 pi_case_l    = 92;    // measured (long axis along X)
 pi_case_w    = 63;    // measured
-pi_x         = 8;     // nudged forward; leaves rear clear for the dispenser
+pi_x         = 0;     // centred; rear is clear for the dispenser
 pi_y         = 0;
 cradle_wall  = 3;
 cradle_h     = 12;
@@ -50,7 +50,8 @@ throat_d     = treat_d + 7;
 
 // --- Dispenser hopper -------------------------------------------------------
 hop_top      = 56; hop_h = 70; hop_wall = 2;
-disp_base_l  = 66; disp_base_w = 58; disp_base_t = 4;
+disp_base_l  = 62; disp_base_w = 58; disp_base_t = 4;
+disp_base_off= -15;   // base shifted toward the servo tower (rear of the throat)
 
 // --- Front sensors (mounted behind the PAW) ---------------------------------
 // Apertures (holes in the shell front):
@@ -88,15 +89,16 @@ m3_clr = 3.3; m3_pilot = 2.8; zip_w = 4; zip_g = 2.2;
 //  COMPONENT LAYOUT  — single source of truth for what sits where.
 //  [ name, size_x, size_y, centre_x, centre_y, mount ]
 //  mount: "cradle" Pi · "board" pad+corner bosses+zip · "stick" pad+lip (taped)
-//  Verified collision-free on the 230x165 deck (see the `layout` view).
+//  Verified collision-free on the 240x185 deck — the `layout` view draws the
+//  REAL pad/cradle/dispenser outlines (not bare footprints) so overlaps show.
 // ----------------------------------------------------------------------------
 COMPONENTS = [
-    ["Pi 5",        pi_case_l, pi_case_w, pi_x,  pi_y, "cradle"],
-    ["Arduino Uno", 54, 69,    80, -44,  "board"],   // front-right (rotated)
-    ["Breadboard",  55, 84,    80,  37,  "stick"],   // front-left (adhesive)
-    ["L298N",       44, 44,   -30,  58,  "board"],   // left lane
-    ["ESP32",       56, 29,   -12, -57,  "board"],   // right lane
-    ["LM2596 buck", 44, 22,   -85,  55,  "board"],   // rear-left corner
+    ["Pi 5",        pi_case_l, pi_case_w, pi_x,  pi_y, "cradle"],  // centre
+    ["Arduino Uno", 54, 69,    84,  44,  "board"],   // front, +y
+    ["Breadboard",  55, 84,    84, -44,  "stick"],   // front, -y
+    ["L298N",       44, 44,   -82,  62,  "board"],   // rear-left
+    ["ESP32",       56, 29,   -82, -62,  "board"],   // rear-right
+    ["LM2596 buck", 44, 22,   -25, -66,  "board"],   // -y lane
 ];
 // Loose bits that just need wiring room (shown on the map, no rigid mount):
 //   2x buzzer · button · 1k resistor · capacitors  -> live on the breadboard.
@@ -110,11 +112,11 @@ module bolt(x,y,d,t){ translate([x,y,-1]) cylinder(d=d,h=t+2); }
 // shared hole patterns (deck <-> bolt-on parts) -----------------------------
 castor_x = -deck_l/2 + 20;
 function castor_holes()=[for(a=[45:90:359])[castor_x+castor_bc/2*cos(a),castor_bc/2*sin(a)]];
-disp_x   = -deck_l/2 + 38;
-function disp_holes() =[for(sx=[-1,1],sy=[-1,1])[disp_x+sx*(disp_base_l/2-7),sy*(disp_base_w/2-7)]];
+disp_x   = -deck_l/2 + 50;   // throat position (base + tower fit behind it)
+function disp_holes_local()=[for(sx=[-1,1],sy=[-1,1])[disp_base_off+sx*(disp_base_l/2-7),sy*(disp_base_w/2-7)]];
 function motor_holes()=[for(sx=[-1,1],sy=[-1,1])[axle_x+sx*16,sy*(deck_w/2-10)]];
-boss_inset = 11;
-function shell_holes()=[for(sx=[-1,1],sy=[-1,1])[sx*(deck_l/2-boss_inset),sy*(deck_w/2-boss_inset)]];
+// shell screw bosses in verified-clear perimeter gaps (front gap, 2 rear, 2 sides)
+function shell_holes()=[[116,6],[-118,60],[-118,-60],[0,90],[0,-90]];
 
 // a universal board pad: locates + raises a board, bolt OR zip-tie -----------
 pad_h = 5;
@@ -170,40 +172,38 @@ module deck(){
         }
         // --- subtractions ---
         for(p=castor_holes()) bolt(p[0],p[1],castor_hole,deck_t);
-        for(p=disp_holes())   bolt(p[0],p[1],m3_clr,deck_t);
+        for(p=disp_holes_local()) bolt(disp_x+p[0],p[1],m3_clr,deck_t);
         for(p=motor_holes())  bolt(p[0],p[1],m3_clr,deck_t);
         for(p=shell_holes())  bolt(p[0],p[1],m3_clr,deck_t);              // shell screws from below
         translate([disp_x,0,-1]) cylinder(d=throat_d+4,h=deck_t+2);       // treats fall through
         // cable pass-throughs between zones
-        for(cx=[-46,30], cy=[-30,30]) translate([cx,cy,-1]) hull(){
+        for(cx=[-52,40], cy=[-30,30]) translate([cx,cy,-1]) hull(){
             translate([0,-9,0]) cylinder(d=7,h=deck_t+2); translate([0,9,0]) cylinder(d=7,h=deck_t+2); }
-        // weight-saving ports in dead corners
-        for(sx=[-1,1],sy=[-1,1]) translate([sx*95,sy*68,-1]) cylinder(d=14,h=deck_t+2);
     }
 }
 
 // ----------------------------------------------------------------------------
 //  PART: DISPENSER  (hopper + servo gate)
 // ----------------------------------------------------------------------------
-gate_axis_x = throat_d/2 + 10;
+gate_axis_x = -(throat_d/2 + 18);   // servo tower BEHIND the throat (clears funnel + throat)
 module dispenser(){
     difference(){
         union(){
-            rrect(disp_base_l,disp_base_w,6,disp_base_t);
-            translate([0,0,disp_base_t]) difference(){
+            translate([disp_base_off,0,0]) rrect(disp_base_l,disp_base_w,6,disp_base_t);
+            translate([0,0,disp_base_t]) difference(){    // funnel hopper over the throat
                 hull(){ rrect(throat_d+2*hop_wall,throat_d+2*hop_wall,3,1);
                         translate([0,0,hop_h-1]) rrect(hop_top,hop_top,6,1); }
                 translate([0,0,-1]) hull(){ rrect(throat_d,throat_d,2,1);
                         translate([0,0,hop_h+1]) rrect(hop_top-2*hop_wall,hop_top-2*hop_wall,4,1); }
             }
-            translate([gate_axis_x,0,disp_base_t]) difference(){
+            translate([gate_axis_x,0,disp_base_t]) difference(){       // servo tower
                 rrect(sg_body_l+6,sg_body_w+6,2,sg_horn_clr+sg_body_h);
                 translate([0,0,sg_horn_clr]) rrect(sg_body_l,sg_body_w,1,sg_body_h+2);
                 for(s=[-1,1]) translate([s*sg_tab_span/2,0,sg_horn_clr+sg_body_h-2]) cylinder(d=sg_screw_d,h=8);
             }
         }
         translate([0,0,-1]) cylinder(d=throat_d,h=disp_base_t+2);
-        for(sx=[-1,1],sy=[-1,1]) bolt(sx*(disp_base_l/2-7),sy*(disp_base_w/2-7),m3_clr,disp_base_t);
+        for(p=disp_holes_local()) bolt(p[0],p[1],m3_clr,disp_base_t);
     }
 }
 module gate(){
@@ -302,7 +302,10 @@ module shell(){
             difference(){ shell_body(0,0); translate([0,0,-2]) shell_body(-2*shell_wall,-shell_wall); }
             for(p=shell_holes()) translate([p[0],p[1],0]){
                 cylinder(d=8.5,h=20);
-                translate([0,sign(p[1])*4,10]) cube([8.5,abs(deck_w/2+shell_clr-shell_wall-abs(p[1]))+4,20],center=true);
+                dx = deck_l/2+shell_clr-abs(p[0]);   // gap to nearest x-wall
+                dy = deck_w/2+shell_clr-abs(p[1]);   // gap to nearest y-wall
+                if(dx<dy) translate([sign(p[0])*(dx/2+1),0,10]) cube([dx+4,8.5,20],center=true);
+                else      translate([0,sign(p[1])*(dy/2+1),10]) cube([8.5,dy+4,20],center=true);
             }
             sensor_mounts();                                                          // real sensor holders
         }
@@ -310,7 +313,10 @@ module shell(){
         translate([0,0,-skirt_drop-2]) shell_body(-2*shell_wall+0.4,-shell_wall);     // open bottom
         front_face();                                                                 // the paw (sensors)
         for(s=[-1,1]) translate([axle_x,s*(deck_w/2+shell_clr),0]) rotate([90,0,0]) cylinder(d=wheel_d+10,h=2*shell_wall+6,center=true); // wheel arches
-        translate([disp_x,0,body_h]) cylinder(d=hop_top+7,h=head_h,center=true);       // hopper hole
+        hull(){                                                                        // hopper opening (funnel + servo tower)
+            translate([disp_x,0,body_h]) cylinder(d=hop_top+7,h=head_h,center=true);
+            translate([disp_x+gate_axis_x,0,body_h]) cylinder(d=sg_body_l+14,h=head_h,center=true);
+        }
         for(i=[-2:2]) translate([i*7,0,body_h-3]) cube([3.2,46,20],center=true);       // fan grille
         // CANIS brand — deboss into the rear wall. Tool starts OUTSIDE the wall and
         // tilts ~4deg to follow the tumblehome, so it engraves crisply & evenly.
@@ -347,16 +353,25 @@ module assembly(){
     }
 }
 // top-down map: every component as a labelled footprint — proves it all fits
+// top-down map drawing the REAL outline of every mount, so overlaps actually show
 module layout(){
     color([.9,.9,.92]) deck();
-    // dispenser + castor footprints
-    color([.55,.75,.95,.85]) translate([disp_x,0,deck_t+0.2]) rrect(disp_base_l,disp_base_w,4,1);
+    // dispenser: real base + servo tower + funnel mouth
+    color([.55,.75,.95,.9]) translate([disp_x,0,deck_t+0.2]){
+        translate([disp_base_off,0,0]) rrect(disp_base_l,disp_base_w,4,1);   // base
+        translate([gate_axis_x,0,0.1]) rrect(sg_body_l+6,sg_body_w+6,2,1.2); // servo tower
+        translate([0,0,0.1]) circle(d=throat_d+4);                            // throat (deck-level)
+    }
     color([.8,.8,.8,.7]) translate([castor_x,0,deck_t+0.2]) circle(d=40);
-    for(p=motor_holes()) color([.3,.3,.3]) translate([p[0],p[1],deck_t]) cylinder(d=4,h=1);
+    for(p=motor_holes()) color([.2,.2,.2]) translate([p[0],p[1],deck_t]) cylinder(d=5,h=1.2);
+    for(p=shell_holes()) color([.85,.4,.1]) translate([p[0],p[1],deck_t]) cylinder(d=8.5,h=1.2);
     for(c=COMPONENTS){
-        sx=c[1]; sy=c[2]; cx=c[3]; cy=c[4];
-        col = c[5]=="cradle"?[.1,.1,.1,.85]:c[5]=="stick"?[.95,.8,.2,.8]:[.3,.7,.45,.8];
-        color(col) translate([cx,cy,deck_t+1]) rrect(sx,sy,3,3);
+        sx=c[1]; sy=c[2]; cx=c[3]; cy=c[4]; mt=c[5];
+        // REAL outline: cradle = fence outer, stick = pad+lip, board = pad
+        osx = mt=="cradle"? pi_case_l+2*cradle_wall+2*case_clr : mt=="stick"? sx+5 : sx;
+        osy = mt=="cradle"? pi_case_w+2*cradle_wall+2*case_clr : mt=="stick"? sy+5 : sy;
+        col = mt=="cradle"?[.1,.1,.1,.85]:mt=="stick"?[.95,.8,.2,.85]:[.3,.7,.45,.85];
+        color(col) translate([cx,cy,deck_t+1]) rrect(osx,osy,3,3);
         color([1,1,1]) translate([cx,cy,deck_t+5]) linear_extrude(0.6)
             text(c[0],size=7,halign="center",valign="center",font="Liberation Sans:style=Bold");
     }

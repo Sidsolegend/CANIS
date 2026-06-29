@@ -96,7 +96,7 @@ PCBs in place to prove the fit (`preview/sensors_front.png`):
 | Dispenser | hopper opening **up** | no (PLA bridges the throat) | 3 / 20 % |
 | Castor / gate / lid | as modelled | no | 3 / 20 % |
 
-Deck ≈ 230 × 175 mm and the shell ≈ 120 mm tall printed this way — both well inside
+Deck ≈ 240 × 185 mm and the shell ≈ 120 mm tall printed this way — both well inside
 the P1S 256³ envelope. Print the shell in **matte PLA** and the faceting disappears —
 it looks injection-moulded.
 
