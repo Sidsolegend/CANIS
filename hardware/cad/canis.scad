@@ -164,8 +164,8 @@ module shell(){
     for(s=[-1,1]) translate([axle_x,s*(deck_w/2+shell_clr),0]) rotate([90,0,0]) cylinder(d=wheel_d+10,h=2*wall+6,center=true); // wheel arches
     translate([disp_x,0,body_h]) cylinder(d=hop_top+8,h=head_h,center=true);       // hopper opening (funnel only)
     for(i=[-2:2]) translate([i*8,40,body_h-3]) cube([3.5,40,20],center=true);       // fan grille
-    // CANIS — deep, clearly-readable deboss on the flat rear wall
-    translate([-deck_l/2-shell_clr-2,0,body_h*.42]) rotate([0,5,0]) rotate([90,0,90]) mirror([1,0,0]) linear_extrude(5) text("CANIS",size=15,halign="center",valign="center",font="Liberation Sans:style=Bold");
+    // CANIS — deep deboss on the rear wall, pushed DOWN clear of the hopper opening
+    translate([-deck_l/2-shell_clr-2,0,9]) rotate([0,3,0]) rotate([90,0,90]) mirror([1,0,0]) linear_extrude(5) text("CANIS",size=13,halign="center",valign="center",font="Liberation Sans:style=Bold");
   }
 }
 
