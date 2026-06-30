@@ -59,12 +59,15 @@ CANIS/
 │   ├── requirements.txt
 │   └── templates/index.html
 ├── vision/                         Phase 6 — ArUco detection (runs on the Pi)
-│   └── detect.py                     marker -> POST zone to /detect  (--test mode, no camera needed)
+│   ├── detect.py                     marker -> POST zone; Pi Camera/USB, --test/--snap, directional labels
+│   └── SETUP.md                      Pi camera setup (CSI ribbon, picamera2, sanity checks)
 ├── hardware/                       wiring + power reference
-│   └── WIRING.md                     every pin, every wire, power architecture, L298N plan
+│   ├── WIRING.md                     every pin, every wire, power architecture, L298N
+│   ├── TESTING.md                    per-subsystem hardware bring-up test guide
+│   └── cad/                          OpenSCAD chassis/dispenser/shell (print AFTER prototype passes)
 ├── State_Machine_CANIS/            offline state-machine reference (pure logic, no WiFi)
 ├── State_Machine_WiFi/             networked state-machine reference (superseded by CANIS_Core)
-├── Sensors_Test/                   standalone PIR + ultrasonic test
+├── Sensors_Test/                   standalone PIR + 3-ultrasonic test
 ├── WiFi_Scan_Test/  WiFi_Connect_Test/   ESP32 WiFi diagnostics (kept as tools)
 ```
 
@@ -179,16 +182,16 @@ tube "throat" (one treat at the gate at a time) matters more than timing.
 
 | Phase | What | Status |
 |-------|------|--------|
-| 1 | Mobility (motors + L298N) | ⏳ Blocked on L298N (in transit) |
+| 1 | Mobility (motors + L298N) | ✅ **Hardware-tested**: L298N differential drive, both channels PWM-matched, all 5 commands, direction tuned on the metal chassis (6 V AA pack). Speeds at 200/220 for bring-up — dial down for exposure |
 | 2 | Treat dispenser | ✅ Bench-tested, works |
-| 3 | ESP32 ↔ Arduino serial | 🟡 DISPENSE command works (ESP32 GPIO13 → Arduino pin10, one-way); movement cmds wait on L298N |
-| 4 | PIR + ultrasonic sensors | ✅ Both read clean; confirmation filter proven (HW-416A PIR, HC-SR04 w/ 1kΩ series on ECHO) |
-| 5 | State machine | ✅ Real sensors in, real outputs out (CANIS_Core.ino): treat dispense + CORRECTION buzzer cue + reward cooldown/cap. Only "orient toward zone" waits on motors |
-| 6 | Vision / detection | 🟡 Pi→ESP32 command channel built + tested (/detect, /command, ESP32 polls); ArUco script ready (vision/detect.py); only live capture waits on the USB webcam |
+| 3 | ESP32 ↔ Arduino serial | ✅ DISPENSE proven; FORWARD/BACKWARD/LEFT/RIGHT/STOP added (Arduino-side tested; over-link confirms in full integration) |
+| 4 | PIR + ultrasonic sensors | ✅ 1-sensor proven (HW-416A PIR, HC-SR04 w/ 1 kΩ on ECHO). Expanded to **3 ultrasonics** (L/C/R) in firmware; 3-sensor positional test deferred to **post-print** (positions come from the shell paw) |
+| 5 | State machine | ✅ Real outputs out (CANIS_Core.ino): dispense + CORRECTION cue + reward cooldown/cap. "Orient toward zone" now **real** — pulsed motor commands, gated by `EXPOSURE_LEVEL`, watchdog-safe |
+| 6 | Vision / detection | ✅ **End-to-end on hardware**: OV5647 → OpenCV/ArUco detects marker ID 0 → directional zone posted → dashboard `/command` serves it (what the ESP32 polls). Pi Camera via picamera2; `--snap`/`--test` helpers; setup in `vision/SETUP.md` |
 | 7 | Dashboard | ✅ Live ESP32→Pi link + simulator fallback; auto-starts on boot (systemd) |
-| 8 | Power & reliability | 🟡 Firmware-side done (back-off, reward cooldown/cap, heap-safe); battery/buck wait on parts. Power plan: hardware/WIRING.md |
-| 9 | Full integration test | ⬜ Needs motors (L298N) |
-| 10 | Documentation | 🟡 README + hardware/WIRING.md + secure GitHub repo |
+| 8 | Power & reliability | 🟡 Firmware-side done; motors run on the 6 V AA pack. Buck converter in hand — **5 V dial-in for the Pi still pending** |
+| 9 | Full integration test | ⬜ Needs the 3-sensor wiring (post-print) + a full-loop run |
+| 10 | Documentation | 🟡 README + `hardware/WIRING.md` + `hardware/TESTING.md` + `vision/SETUP.md` |
 
 **Running in parallel:** gradual exposure / fear-desensitization with Shifu starts as
 soon as Phase 1 produces a robot that can move at all — it runs on its own
@@ -204,8 +207,16 @@ weeks/months calendar and does not wait for the build to finish.
 - **Use `SoftwareSerial` on the Uno** (e.g. pins 10/11) for the ESP32 link — the Uno's
   only hardware UART is shared with USB/Serial Monitor.
 - **L298N needs its own battery power**, separate from the Arduino's logic supply.
+  Runs on the 6 V AA pack — *not* a 9 V PP3 block (can't supply motor current).
+- **Remove the L298N ENA/ENB jumper caps** to get PWM speed control from the Arduino.
+  Leaving them on pins the channel to full speed and fights the PWM — this bit us
+  (one channel looked "dead" until its ENB cap was off *and* pin 5 was wired solid).
+  The separate **+5V-enable jumper stays ON** for a ≤12 V supply.
+- **Loose power-feed terminals = weak/slow motors.** A battery wire not fully clamped
+  drops voltage under load. Strip to bare copper, clamp fully, tug-test.
 - **Three "motor driver" boards from the parts pile were ruled out** — none exposed
   IN1-4/ENA/ENB digital control pins. L298N is the correct part.
-- **Pi camera module has the wrong (Pi Zero) connector for the Pi 5** — needs a cheap
-  CSI adapter ribbon. (A UVC USB webcam is being sourced as a temporary stand-in.)
+- **Pi camera needs the CSI adapter ribbon for the Pi 5** — now in hand. Vision runs
+  the Pi Camera via `picamera2` (USB webcam still works via `detect.py --camera usb`).
+  Setup: `vision/SETUP.md`.
 - **Vision needs `opencv-contrib-python`** (not stock OpenCV) for ArUco marker support.

@@ -25,6 +25,7 @@
 
 #include <WiFi.h>
 #include <HTTPClient.h>
+#include <ctype.h>             // tolower() for zone-label matching
 #include "arduino_secrets.h"   // WiFi/Pi creds — gitignored, see arduino_secrets.h.example
 
 // ---------- WiFi / Pi ----------
@@ -35,16 +36,30 @@ const int   PI_PORT   = 5000;
 const unsigned long REPORT_MS = 1000;   // push state to Pi at 1 Hz (plus on change)
 const unsigned long POLL_MS   = 1000;   // poll Pi for vision commands at 1 Hz
 
-// ---------- Sensor pins (from Sensors_Test) ----------
+// ---------- Sensor pins ----------
 const int PIR_PIN  = 27;   // PIR OUT (3.3V logic, read directly)
-const int TRIG_PIN = 26;   // ultrasonic trigger
-const int ECHO_PIN = 25;   // ultrasonic echo (THROUGH the 1k series resistor)
+
+// THREE ultrasonics, mounted left / centre / right so the trio also gives a
+// local bearing on the dog. Fired SEQUENTIALLY (a shared/parallel trigger makes
+// their echoes cross-talk). Each ECHO comes in THROUGH its own 1k series
+// resistor (5V->3.3V protection). 34/35 are input-only ESP32 pins — fine for
+// ECHO. See hardware/WIRING.md for the full table.
+const int   US_TRIG[3] = { 32, 26, 14 };          // LEFT, CENTRE, RIGHT
+const int   US_ECHO[3] = { 34, 25, 35 };          // LEFT, CENTRE, RIGHT
+const char* US_DIR[3]  = { "LEFT", "FORWARD", "RIGHT" };  // orient hint per sensor
+// CENTRE (26/25) is the original sensor. The waterproof SR04M-2 has a ~25cm
+// blind zone, so mount it on the longest-range position (whichever that is) and
+// keep ZONE_CM just above its blind spot. Set NUM_US to 2 to disable the third.
+const int   NUM_US = 3;
+const unsigned long ECHO_TIMEOUT_US = 12000;      // ~2m cap; close-range zone needs no more
 
 // ---------- Arduino dispenser link (ESP32 -> Arduino, one-way) ----------
 // Serial2 remapped to accessible-side pins (GPIO 16/17 are on the buried side).
 // Only TX is wired: ESP32 GPIO 13 -> Arduino pin 10 (SoftwareSerial RX), + GND.
+// RX is set to -1 (unused) so the UART doesn't claim GPIO 14 — that pin now
+// drives the RIGHT ultrasonic's trigger.
 const int ARD_TX_PIN = 13;   // ESP32 TX2 -> Arduino pin 10
-const int ARD_RX_PIN = 14;   // unused (we only send); leave unwired
+const int ARD_RX_PIN = -1;   // unused: we only send (frees GPIO 14 for US_TRIG[2])
 
 // ---------- Buzzer (the brain's own marker/cue output) ----------
 // Buzzer + -> GPIO 33, buzzer - -> GND. Distinct from the Arduino's reward
@@ -74,6 +89,24 @@ const float AROUSAL_RISE_PER_SEC = 30.0;
 const int CORRECTION_TONE_FREQ = 800;   // disengage cue (distinct from 2000Hz reward marker)
 const int CORRECTION_TONE_MS   = 150;
 
+// ---------- Movement / exposure (THE welfare knob) ----------
+// Shifu is afraid of moving objects, so CANIS introduces motion GRADUALLY over
+// weeks/months. EXPOSURE_LEVEL is the master gate on all physical movement and
+// the single most important safety/welfare setting in the project:
+//   0 = no movement at all (buzzer-only correction)   <-- SAFE DEFAULT
+//   1 = orient only: pivot to face the zone, never approach
+//   2 = orient + a brief, gentle forward approach
+// Raise by ONE level only after his logged fear response shows he's comfortable
+// at the current one. Never skip levels. (Toggle live with the 'm' key.)
+int EXPOSURE_LEVEL = 0;
+
+// Re-send cadence to feed the Arduino's motion watchdog. MUST stay below the
+// Arduino's MOTION_TIMEOUT_MS (1000 ms) or the robot stutters; if the link
+// drops, the Arduino auto-stops within ~1 s. (See Treat_Dispenser_CANIS.ino.)
+const unsigned long MOVE_PULSE_MS = 500;
+const unsigned long ORIENT_MS     = 700;   // pivot-toward-zone duration per correction cycle
+const unsigned long APPROACH_MS   = 400;   // brief forward nudge after orienting (level 2 only)
+
 // Reward safety: stop the hopper from emptying. Gates BOTH reward paths.
 const unsigned long REWARD_COOLDOWN_MS = 20000;  // min gap between any two treats
 const int MAX_SESSION_REWARDS          = 30;     // hard cap until reboot
@@ -93,9 +126,11 @@ struct Confirmed {
   }
 };
 
-Confirmed pir;        // confirmed motion
-Confirmed zone;       // confirmed "something is in the zone"
-bool detectionActive = false;   // pir.state || zone.state -> drives arousal
+Confirmed pir;            // confirmed motion
+Confirmed usZone[3];      // per-sensor confirmed "something in the zone" (L/C/R)
+float     usCm[3] = { -1, -1, -1 };   // last good distance per sensor (for nearest pick)
+bool      zoneActive = false;         // any ultrasonic confirmed in-zone
+bool detectionActive = false;   // pir.state || zoneActive || visionActive -> drives arousal
 
 // ---------- State (from State_Machine_WiFi) ----------
 enum State { CALM, AROUSAL, CORRECTION };
@@ -114,19 +149,28 @@ unsigned long lastPoll = 0;       // vision-command polling
 bool visionActive = false;        // a fresh vision detection from the Pi
 char visionZone[24] = "";         // which zone the camera reported (fixed buffer, no heap churn)
 
+// ---------- Movement sub-behavior ----------
+char          moveCmd[12]    = ""; // motion we're currently pulsing ("" = none)
+unsigned long moveUntil      = 0;  // stop this motion at/after this time
+unsigned long lastMovePulse  = 0;  // last time we re-sent moveCmd (watchdog feed)
+int           motionPhase    = 0;  // 0 none, 1 orienting, 2 approaching
+
 void setup() {
   Serial.begin(115200);
   delay(300);
   pinMode(PIR_PIN, INPUT_PULLDOWN);   // reads steady LOW if PIR is unplugged (no phantom motion)
-  pinMode(TRIG_PIN, OUTPUT);
-  pinMode(ECHO_PIN, INPUT);
-  digitalWrite(TRIG_PIN, LOW);
+  for (int i = 0; i < NUM_US; i++) {
+    pinMode(US_TRIG[i], OUTPUT);
+    pinMode(US_ECHO[i], INPUT);
+    digitalWrite(US_TRIG[i], LOW);
+  }
   pinMode(BUZZER_PIN, OUTPUT);
 
   Serial2.begin(9600, SERIAL_8N1, ARD_RX_PIN, ARD_TX_PIN);  // link to Arduino dispenser
 
   Serial.println("\nCANIS core online. PIR warming up (~60s).");
-  Serial.println("Keys:  t = manual trigger   r = reset to calm   d = test dispense");
+  Serial.println("Keys:  t=trigger  r=reset  d=dispense  m=cycle exposure  f=test fwd  s=stop");
+  Serial.print  ("Exposure level: "); Serial.println(EXPOSURE_LEVEL);
   connectWiFi();
 
   bootTime = millis();
@@ -143,8 +187,9 @@ void loop() {
   readSensors(now);       // local PIR + ultrasonic
   pollCommand(now);       // vision detections from the Pi (remote trigger)
   updateArousal(dt);      // any detection drives arousal up; decay always pulls down
-  updateState();          // recompute state + transitions (verbatim)
-  runStateBehavior(now);  // act on current state (verbatim)
+  updateState();          // recompute state + transitions
+  runStateBehavior(now);  // act on current state
+  serviceMotion(now);     // keep any active motion alive + end it on time
   logStatus(now);
   reportToPi(now);
 
@@ -185,11 +230,21 @@ void handleInput() {
     } else if (c == 'd') {
       Serial2.println("DISPENSE");   // test the Arduino link in isolation
       Serial.println("  [MANUAL] sent DISPENSE to Arduino");
+    } else if (c == 'm') {
+      EXPOSURE_LEVEL = (EXPOSURE_LEVEL + 1) % 3;   // 0 -> 1 -> 2 -> 0
+      Serial.print("  [MANUAL] exposure level -> "); Serial.println(EXPOSURE_LEVEL);
+    } else if (c == 'f') {
+      startMotion("FORWARD", 1500, millis());      // bench-test the motor link
+      motionPhase = 0;
+      Serial.println("  [MANUAL] test FORWARD (1.5s)");
+    } else if (c == 's') {
+      stopMotion(millis());
+      Serial.println("  [MANUAL] STOP");
     }
   }
 }
 
-// ---------- Real sensors (verbatim logic from Sensors_Test) ----------
+// ---------- Real sensors (PIR + 3 ultrasonics) ----------
 void readSensors(unsigned long now) {
   if (now - lastSample < SAMPLE_MS) return;
   lastSample = now;
@@ -201,26 +256,46 @@ void readSensors(unsigned long now) {
   if (pir.update(pirRaw))
     Serial.printf("  [SENSOR] PIR  -> %s\n",  pir.state  ? "MOTION"  : "clear");
 
-  float dist = readDistanceCm();
-  bool inZoneRaw = (dist > 0 && dist <= ZONE_CM);
-  if (zone.update(inZoneRaw))
-    Serial.printf("  [SENSOR] ZONE -> %s\n", zone.state ? "IN ZONE" : "clear");
+  // Fire the ultrasonics one at a time; a short gap lets each burst's echoes
+  // die before the next sensor pings, so they don't hear each other.
+  bool anyZone = false;
+  for (int i = 0; i < NUM_US; i++) {
+    float dist = readDistanceCm(US_TRIG[i], US_ECHO[i]);
+    usCm[i] = dist;
+    bool inZoneRaw = (dist > 0 && dist <= ZONE_CM);
+    if (usZone[i].update(inZoneRaw))
+      Serial.printf("  [SENSOR] ZONE %-7s -> %s\n",
+                    US_DIR[i], usZone[i].state ? "IN ZONE" : "clear");
+    if (usZone[i].state) anyZone = true;
+    delay(5);   // inter-sensor settle (anti-cross-talk)
+  }
+  zoneActive = anyZone;
 }
 
-float readDistanceCm() {
-  digitalWrite(TRIG_PIN, LOW);  delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH); delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
-  unsigned long dur = pulseIn(ECHO_PIN, HIGH, 25000);
+float readDistanceCm(int trig, int echo) {
+  digitalWrite(trig, LOW);  delayMicroseconds(2);
+  digitalWrite(trig, HIGH); delayMicroseconds(10);
+  digitalWrite(trig, LOW);
+  unsigned long dur = pulseIn(echo, HIGH, ECHO_TIMEOUT_US);
   if (dur == 0) return -1.0;
   return dur * 0.0343 / 2.0;
+}
+
+// Nearest confirmed-in-zone ultrasonic -> a local heading toward the dog.
+// Returns nullptr if no sensor is currently confirmed in-zone.
+const char* localBearing() {
+  int best = -1; float bestCm = 1e9;
+  for (int i = 0; i < NUM_US; i++) {
+    if (usZone[i].state && usCm[i] > 0 && usCm[i] < bestCm) { bestCm = usCm[i]; best = i; }
+  }
+  return best >= 0 ? US_DIR[best] : nullptr;
 }
 
 // ---------- Arousal: the SEAM ----------
 // Sustained detection climbs; decay always bleeds off. Net +18/s while detected.
 void updateArousal(float dt) {
   // Any detection drives arousal: local sensors OR a remote vision call from the Pi.
-  detectionActive = pir.state || zone.state || visionActive;
+  detectionActive = pir.state || zoneActive || visionActive;
   if (detectionActive) arousal += AROUSAL_RISE_PER_SEC * dt;
   arousal -= DECAY_PER_SEC * dt;
   if (arousal > AROUSAL_MAX) arousal = AROUSAL_MAX;
@@ -240,6 +315,10 @@ void updateState() {
     Serial.print(name(prevState)); Serial.print(" -> "); Serial.println(name(state));
 
     if (state == CORRECTION) interventionCount++;
+
+    // Leaving CORRECTION: halt any motion immediately (don't wait for the
+    // watchdog) — the dog disengaged, so CANIS must stop moving at once.
+    if (prevState == CORRECTION && state != CORRECTION) stopMotion(millis());
 
     // Reward LEAVING — dropping back to CALM means the dog disengaged.
     if (state == CALM && (prevState == AROUSAL || prevState == CORRECTION)) {
@@ -271,12 +350,81 @@ void runStateBehavior(unsigned long now) {
       if (now - lastCorrectionAction >= 2000) {
         lastCorrectionAction = now;
         tone(BUZZER_PIN, CORRECTION_TONE_FREQ, CORRECTION_TONE_MS);  // disengage cue
-        Serial.print("  [OUTPUT] correction cue (buzzer) + would orient toward zone");
-        if (visionZone[0]) { Serial.print(": "); Serial.print(visionZone); }  // vision tells us where
+        Serial.print("  [OUTPUT] correction cue (buzzer)");
+        if (EXPOSURE_LEVEL >= 1) {
+          const char* dir = localBearing();           // our own ultrasonics first...
+          if (!dir) dir = zoneToDir(visionZone);      // ...else fall back to the Pi's vision label
+          startMotion(dir, ORIENT_MS, now);           // pivot to face the zone
+          motionPhase = 1;                            // serviceMotion may chain an approach (level 2)
+          Serial.print(" + orient "); Serial.print(dir);
+        } else {
+          Serial.print(" + (movement off, exposure 0)");
+        }
+        if (visionZone[0]) { Serial.print(" zone="); Serial.print(visionZone); }
         Serial.println();
       }
       break;
   }
+}
+
+// ---------- Movement (gated by EXPOSURE_LEVEL; fed to the Arduino watchdog) ----------
+// Start a bounded motion. We fire the command now and serviceMotion() re-pulses
+// it every MOVE_PULSE_MS until moveUntil — so the Arduino's watchdog keeps the
+// motors alive while we mean it, but halts them within ~1s if the link drops.
+void startMotion(const char* cmd, unsigned long durMs, unsigned long now) {
+  strncpy(moveCmd, cmd, sizeof(moveCmd) - 1);
+  moveCmd[sizeof(moveCmd) - 1] = '\0';
+  moveUntil     = now + durMs;
+  lastMovePulse = now;
+  Serial2.println(moveCmd);          // fire immediately
+}
+
+void stopMotion(unsigned long now) {
+  (void)now;
+  if (moveCmd[0]) Serial2.println("STOP");
+  moveCmd[0]  = '\0';
+  moveUntil   = 0;
+  motionPhase = 0;
+}
+
+// Keep the active motion alive and end it on time. On finishing an orient at
+// exposure level 2, chain a brief forward approach (if still correcting).
+void serviceMotion(unsigned long now) {
+  if (!moveCmd[0]) return;
+
+  if ((long)(now - moveUntil) >= 0) {              // this motion's time is up
+    if (motionPhase == 1 && EXPOSURE_LEVEL >= 2 && state == CORRECTION) {
+      startMotion("FORWARD", APPROACH_MS, now);    // orient -> gentle approach
+      motionPhase = 2;
+    } else {
+      stopMotion(now);
+    }
+    return;
+  }
+
+  if (now - lastMovePulse >= MOVE_PULSE_MS) {       // feed the watchdog
+    Serial2.println(moveCmd);
+    lastMovePulse = now;
+  }
+}
+
+// Map the Pi's vision zone label to a turn. Zone labels are room-specific, so
+// EDIT THIS to match your layout / camera framing. Until then: a label
+// containing "left"/"right" pivots that way; anything else drives straight.
+// (A true bearing needs a zone->angle map or an onboard heading sensor — Phase 8+.)
+bool labelHas(const char* hay, const char* needleLower) {
+  for (; *hay; hay++) {
+    const char* h = hay; const char* n = needleLower;
+    while (*n && tolower((unsigned char)*h) == *n) { h++; n++; }
+    if (!*n) return true;
+  }
+  return false;
+}
+
+const char* zoneToDir(const char* z) {
+  if (labelHas(z, "left"))  return "LEFT";
+  if (labelHas(z, "right")) return "RIGHT";
+  return "FORWARD";
 }
 
 void reward(const char* why) {
