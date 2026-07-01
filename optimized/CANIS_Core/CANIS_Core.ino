@@ -361,6 +361,18 @@ void runStateBehavior(unsigned long now) {
         if (EXPOSURE_LEVEL >= 1) {
           const char* dir = localBearing();
           if (!dir) dir = zoneToDir(visionZone);
+          // [OPT-8][SAFETY] Level-1 welfare invariant: "orient/pivot ONLY, NEVER
+          // approach." The bearing can legitimately be "FORWARD" — localBearing()
+          // returns it when the CENTRE ultrasonic is nearest, and zoneToDir()
+          // returns it as its default — which the Arduino executes as a straight
+          // forward drive AT the dog. A forward approach is only permitted at
+          // EXPOSURE_LEVEL >= 2 (enforced again in serviceMotion's phase-2 gate).
+          // Below that, rewrite a FORWARD bearing into a token in-place pivot (a
+          // short LEFT nudge) so we still reorient toward the zone without ever
+          // closing distance on the dog. Levels >= 2 are unchanged.
+          if (EXPOSURE_LEVEL < 2 && strcmp(dir, "FORWARD") == 0) {
+            dir = "LEFT";   // hold ground: pivot in place, do NOT approach
+          }
           startMotion(dir, CANIS_ORIENT_MS, now);
           motionPhase = 1;
           Serial.print(" + orient "); Serial.print(dir);
