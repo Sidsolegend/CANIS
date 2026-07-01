@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CANIS</title>
+  <style>
+    :root {
+      --bg: #0e1116; --card: #171c24; --line: #232a35;
+      --text: #e6edf3; --muted: #8b97a7;
+      --calm: #2ea043; --arousal: #d29922; --correction: #f85149;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh; padding: 24px 16px;
+    }
+    .wrap { max-width: 560px; margin: 0 auto; }
+    header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 20px; }
+    h1 { font-size: 22px; letter-spacing: 2px; margin: 0; }
+    .conn { font-size: 12px; color: var(--muted); }
+    .conn.live::before { content: "● "; color: var(--calm); }
+    .conn.stale::before { content: "● "; color: var(--correction); }
+
+    .state-card {
+      background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+      padding: 22px; text-align: center; margin-bottom: 16px;
+      transition: border-color .3s;
+    }
+    .state-name { font-size: 40px; font-weight: 700; letter-spacing: 3px; }
+    .state-sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    .state-CALM .state-name { color: var(--calm); }
+    .state-AROUSAL .state-name { color: var(--arousal); }
+    .state-CORRECTION .state-name { color: var(--correction); }
+    .state-CALM { border-color: var(--calm); }
+    .state-AROUSAL { border-color: var(--arousal); }
+    .state-CORRECTION { border-color: var(--correction); }
+
+    .bar-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); margin: 0 0 6px; }
+    .bar { height: 14px; background: #0a0d12; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); }
+    .bar > span { display: block; height: 100%; width: 0; transition: width .4s ease, background .4s; }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+    .stat { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
+    .stat .v { font-size: 26px; font-weight: 700; }
+    .stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; }
+    footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 18px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>C A N I S</h1>
+      <span id="conn" class="conn stale">connecting…</span>
+    </header>
+
+    <div id="stateCard" class="state-card state-CALM">
+      <div id="stateName" class="state-name">—</div>
+      <div id="stateSub" class="state-sub">awaiting data</div>
+    </div>
+
+    <div class="bar-label"><span>AROUSAL</span><span id="arousalVal">—</span></div>
+    <div class="bar"><span id="arousalBar"></span></div>
+
+    <div class="grid">
+      <div class="stat"><div id="rewards" class="v">—</div><div class="k">Rewards given</div></div>
+      <div class="stat"><div id="interventions" class="v">—</div><div class="k">Interventions</div></div>
+      <div class="stat"><div id="lastReward" class="v">—</div><div class="k">Last reward</div></div>
+      <div class="stat"><div id="uptime" class="v">—</div><div class="k">Uptime</div></div>
+    </div>
+
+    <footer id="src">polling /api/state every 1s</footer>
+  </div>
+
+  <script>
+    const COLORS = { CALM: "var(--calm)", AROUSAL: "var(--arousal)", CORRECTION: "var(--correction)" };
+
+    function ago(epoch) {
+      if (!epoch) return "never";
+      const s = Math.max(0, Math.round(Date.now() / 1000 - epoch));
+      if (s < 60) return s + "s ago";
+      if (s < 3600) return Math.floor(s / 60) + "m ago";
+      return Math.floor(s / 3600) + "h ago";
+    }
+    function dur(s) {
+      if (s < 60) return s + "s";
+      if (s < 3600) return Math.floor(s / 60) + "m " + (s % 60) + "s";
+      return Math.floor(s / 3600) + "h " + Math.floor((s % 3600) / 60) + "m";
+    }
+
+    async function tick() {
+      const conn = document.getElementById("conn");
+      try {
+        const r = await fetch("/api/state", { cache: "no-store" });
+        const d = await r.json();
+
+        const card = document.getElementById("stateCard");
+        card.className = "state-card state-" + d.state;
+        document.getElementById("stateName").textContent = d.state;
+        document.getElementById("stateSub").textContent =
+          d.state === "CALM" ? "settled — baseline" :
+          d.state === "AROUSAL" ? "watching, no intervention" :
+          "intervening — marker + orient";
+
+        const pct = Math.min(100, 100 * d.arousal / d.arousal_max);
+        const bar = document.getElementById("arousalBar");
+        bar.style.width = pct + "%";
+        bar.style.background = COLORS[d.state];
+        document.getElementById("arousalVal").textContent = d.arousal + " / " + d.arousal_max;
+
+        document.getElementById("rewards").textContent = d.reward_count;
+        document.getElementById("interventions").textContent = d.intervention_count;
+        document.getElementById("lastReward").textContent = ago(d.last_reward_time);
+        document.getElementById("uptime").textContent = dur(d.uptime_sec);
+
+        conn.className = "conn live";
+        conn.textContent = "live";
+        document.getElementById("src").textContent =
+          d.source === "esp32" ? "live data — ESP32" : "demo data — simulator (no ESP32 signal)";
+      } catch (e) {
+        conn.className = "conn stale";
+        conn.textContent = "no signal";
+      }
+    }
+
+    tick();
+    setInterval(tick, 1000);
+  </script>
+</body>
+</html>

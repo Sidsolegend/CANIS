@@ -1,0 +1,64 @@
+# CANIS dashboard — systemd service  [OPTIMIZED DUPLICATE]
+# ========================================================
+# Differences vs the original dashboard/canis-dashboard.service:
+#   [OPT-2] Runs the WAITRESS production WSGI server, not the Flask dev server
+#           (orig ExecStart ran `python3 app.py`, i.e. app.run() — single-
+#           threaded dev server, not meant to face a network).
+#   [OPT-2] Loads the shared secret from an EnvironmentFile so CANIS_TOKEN is
+#           passed to the app without living in this unit or in source.
+#   [OPT-2] systemd sandbox hardening: NoNewPrivileges, ProtectSystem=strict,
+#           PrivateTmp, and a tight ReadWritePaths. A compromised dashboard
+#           process can no longer write outside its own directory.
+#
+# Install on the Pi:
+#   python3 -m pip install --user waitress          # or: sudo apt install python3-waitress
+#   sudo cp ~/dashboard/canis-dashboard.service /etc/systemd/system/
+#   printf 'CANIS_TOKEN=%s\n' "$(openssl rand -hex 16)" | sudo tee /etc/canis/dashboard.env
+#   sudo chmod 600 /etc/canis/dashboard.env
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now canis-dashboard
+# Check:   systemctl status canis-dashboard
+# Logs:    journalctl -u canis-dashboard -f
+#
+# Put the SAME token value into arduino_secrets.h on the ESP32:
+#   #define SECRET_CANIS_TOKEN "<the hex string above>"
+
+[Unit]
+Description=CANIS dashboard (waitress + Flask)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sidsolegend
+WorkingDirectory=/home/sidsolegend/dashboard
+
+# Shared secret (and any other config) live here, mode 600, not in the unit.
+EnvironmentFile=/etc/canis/dashboard.env
+
+# Production WSGI server. waitress is pure-Python (no compiler needed on the Pi)
+# and threaded, which is why app.py now uses locks around shared state.
+ExecStart=/usr/bin/env python3 -m waitress --host=0.0.0.0 --port=5000 --threads=8 app:app
+
+Restart=on-failure
+RestartSec=3
+
+# --- sandbox hardening [OPT-2] ---
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+# ProtectSystem=strict makes the whole FS read-only except these paths. The app
+# writes nothing today, so grant just its own dir (and drop this if truly RO).
+ReadWritePaths=/home/sidsolegend/dashboard
+
+[Install]
+WantedBy=multi-user.target
