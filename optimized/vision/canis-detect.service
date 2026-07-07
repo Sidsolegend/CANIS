@@ -1,0 +1,75 @@
+# CANIS vision — systemd service  [ROADMAP C7]
+# =============================================
+# Runs vision/detect.py as a managed service on the Pi, mirroring the dashboard's
+# canis-dashboard.service (token via EnvironmentFile, sandbox hardening). SETUP.md
+# flagged that detect.py had no unit; this is it.
+#
+# Differences vs canis-dashboard.service (both intentional — a camera needs more
+# device access than a web server):
+#   * PrivateDevices=no + SupplementaryGroups=video: the Pi Camera / a USB webcam
+#     needs the video devices (/dev/video*, and the libcamera/dma-heap nodes on a
+#     Pi Camera). The dashboard hides all devices (PrivateDevices=yes); vision
+#     cannot.
+#   * No MemoryDenyWriteExecute: OpenCV/NumPy/libcamera load native code and can
+#     JIT, which W^X blocks. The dashboard (pure-Python waitress) keeps it.
+# Everything else — NoNewPrivileges, ProtectSystem=strict, ProtectHome=read-only
+# with a tight ReadWritePaths (for snapshot.jpg), restart-on-failure — matches.
+#
+# Config (zone, token, dashboard URL, marker IDs) comes from the environment so
+# ONE code copy serves every room (see detect.py --help / env precedence).
+#
+# Install on the Pi:
+#   sudo cp ~/vision/canis-detect.service /etc/systemd/system/
+#   sudo tee /etc/canis/detect.env >/dev/null <<'EOF'
+#   CANIS_TOKEN=<same hex string as the dashboard>
+#   CANIS_DETECT_URL=http://127.0.0.1:5000/detect
+#   CANIS_ZONE=kitchen
+#   CANIS_MARKER_IDS=0
+#   EOF
+#   sudo chmod 600 /etc/canis/detect.env
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now canis-detect
+# Check:   systemctl status canis-detect
+# Logs:    journalctl -u canis-detect -f          # blur-guard [C6] alerts show here
+
+[Unit]
+Description=CANIS vision (ArUco collar detector -> dashboard /detect)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sidsolegend
+WorkingDirectory=/home/sidsolegend/vision
+
+# Shared secret + per-camera config (zone, URL, marker IDs) live here, mode 600.
+EnvironmentFile=/etc/canis/detect.env
+
+# --camera pi for the Pi Camera Module; change to `usb` for a USB webcam. The
+# zone/token/URL come from the EnvironmentFile above, not the command line.
+ExecStart=/usr/bin/env python3 detect.py --camera pi
+
+Restart=on-failure
+RestartSec=3
+
+# --- sandbox hardening (camera-relaxed variant of the dashboard unit's) ---
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+# A camera needs real device nodes, so PrivateDevices is OFF and the service
+# joins the video group. Narrow to explicit DeviceAllow lines if you prefer.
+PrivateDevices=no
+SupplementaryGroups=video
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+LockPersonality=yes
+# ProtectSystem=strict + ProtectHome=read-only make the FS read-only except this
+# path, where --snap writes snapshot.jpg. Widen if you point output elsewhere.
+ReadWritePaths=/home/sidsolegend/vision
+
+[Install]
+WantedBy=multi-user.target

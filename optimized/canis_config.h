@@ -42,6 +42,15 @@
 // dropped, kicks a non-blocking WiFi.reconnect().
 #define CANIS_WIFI_CHECK_MS        5000UL
 
+// Vision-detection local TTL [OPT-9] (NEW): visionActive is a latch that is
+// normally cleared by a successful /command poll returning "NONE". If WiFi or
+// the Pi dies while the latch is set, the original held arousal up FOREVER —
+// permanent CORRECTION (buzzer + motion at exposure >= 1) at a dog that may
+// have left long ago. This TTL clears the latch locally when the poll stops
+// refreshing it. Must be > 2x CANIS_POLL_MS so a single missed poll doesn't
+// flap the detection.
+#define CANIS_VISION_TTL_MS        4000UL
+
 // ======================= Sensor tunables (from Sensors_Test) =======================
 #define CANIS_CONFIRM_N            3        // consecutive agreeing reads to flip confirmed
 #define CANIS_SAMPLE_MS            100      // 10 Hz sampling -> 3 reads = ~300 ms to confirm
@@ -86,6 +95,28 @@
 #define CANIS_ORIENT_MS            700UL    // pivot-toward-zone duration per correction cycle
 #define CANIS_APPROACH_MS          400UL    // brief forward nudge after orienting (level 2 only)
 
+// Exposure change is a two-step ARM->CONFIRM commit [C4] (ENGINEERING_REVIEW
+// §1.7): the ORIGINAL cycled 0->1->2->0 on a single 'm' keypress, so a stray
+// double-press from level 0 landed on 2 (approach enabled) with no confirmation
+// — the worst possible accidental transition on the most welfare-critical knob.
+// Now 'm' only PROPOSES the next level (arms it) and a distinct 'y' commits it;
+// an un-confirmed proposal auto-expires after this window so a stale arm can
+// never be committed later by an unrelated keypress. (Dashboard mirrors this
+// with /exposure/arm + /exposure/confirm and a visible session arm state.)
+#define CANIS_EXPOSURE_CONFIRM_MS  5000UL   // arm expires if not confirmed within this
+
+// ======================= Observation-only build [B5] =======================
+// CANIS_OBSERVE_ONLY compiles the robot into a PURE SENSOR: the full pipeline
+// (sensors -> confirmation -> arousal -> state machine -> 1 Hz dashboard report)
+// runs completely unchanged, but every ACTUATOR is gated off — no treat
+// dispense, no correction buzzer, no motion. This replaces the "unplug the
+// dispenser link / run the hopper empty" improvisation the baseline week used
+// for its overnight false-positive probe (STUDY_PROTOCOL.md Phase A1 / ROADMAP
+// B3): the state trace is still recorded, so you can measure how often the
+// robot WOULD have intervened, with zero risk of a stray cue reaching the dog.
+// Default 0 = normal build. Set to 1 only for observation/baseline sessions.
+#define CANIS_OBSERVE_ONLY         0
+
 // ======================= Reward safety =======================
 #define CANIS_REWARD_COOLDOWN_MS   20000UL  // min gap between any two treats
 #define CANIS_MAX_SESSION_REWARDS  30       // hard cap until reboot
@@ -96,7 +127,19 @@
 // reward only on ACK (delivery) rather than on send (intent). Toggle off to
 // keep the original count-on-send behavior on hardware that can't ACK.
 #define CANIS_USE_DISPENSE_ACK     1
-#define CANIS_ACK_TIMEOUT_MS       1500UL   // if no ACK within this window, log a miss
+// ACK window sized for the WORST case on the Arduino with jam detection [OPT-11]
+// enabled: marker (120) + pre-drop (150) + gate (150) + drop wait (600) +
+// retry gate (150) + retry wait (600) ~= 1.8 s. 2.5 s gives margin.
+#define CANIS_ACK_TIMEOUT_MS       2500UL   // if no ACK/JAM within this window, log a miss
+
+// ======================= Dispenser fault policy [OPT-11] =======================
+// If the Arduino reports "JAM" (beam-break saw no treat fall, even after one
+// retry) this many times IN A ROW, the ESP32 stops requesting treats — a
+// marker tone with no treat actively damages the conditioning, so a faulted
+// dispenser must go silent, not keep beeping. Manual 'd' clears the fault
+// after the hopper is fixed. (Arduino-side tunables live in the dispenser
+// sketch: JAM_SENSOR_ENABLED, DROP_TIMEOUT_MS, JAM_RETRY.)
+#define CANIS_JAM_FAULT_THRESHOLD  2
 
 // Compile-time sanity checks so a bad edit fails loudly instead of misbehaving.
 #if CANIS_CALM_REWARD_MS < CANIS_REWARD_COOLDOWN_MS
@@ -110,6 +153,9 @@
 #endif
 #if CANIS_MOVE_PULSE_MS >= 1000UL
 #error "MOVE_PULSE_MS must be < Arduino MOTION_TIMEOUT_MS (1000) or motion stutters"
+#endif
+#if CANIS_VISION_TTL_MS <= 2 * CANIS_POLL_MS
+#error "VISION_TTL_MS must exceed 2x POLL_MS or one missed poll flaps the vision latch"
 #endif
 
 #endif  // CANIS_CONFIG_H

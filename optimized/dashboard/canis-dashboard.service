@@ -57,7 +57,9 @@ RestrictNamespaces=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 # ProtectSystem=strict makes the whole FS read-only except these paths. The app
-# writes nothing today, so grant just its own dir (and drop this if truly RO).
+# writes its JSONL event log ([OPT-14]) under its own dir (dashboard/logs/), so
+# that dir must stay writable. Override the location with CANIS_LOG_DIR in the
+# EnvironmentFile if you move it (and widen ReadWritePaths to match).
 ReadWritePaths=/home/sidsolegend/dashboard
 
 [Install]

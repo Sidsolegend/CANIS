@@ -1,222 +1,163 @@
 # CANIS
 
-A home robot built around **classical (Pavlovian) conditioning** to address real
-behavioral issues in a young Goldendoodle (Shifu) — eating things he shouldn't,
-barking, climbing furniture, roaming. Cameras watch a room, detect bad behavior in
-a zone, and CANIS intervenes with a **buzzer marker + treat**, rewarding the dog for
-*leaving* a forbidden zone rather than punishing him for entering it.
+[](https://github.com/Sidsolegend/CANIS/actions/workflows/tests.yml)
 
-The core constraint shaped the whole design: Shifu is **afraid of moving objects**, so
-a robot that "corrects" by charging at him would traumatize him. CANIS instead
-introduces movement *gradually*, over weeks/months, while measuring his fear
-response. That longitudinal fear-response data is the actual point of the project.
+**A welfare-first conditioning robot for a fearful dog.**
+CANIS rewards my Goldendoodle, Shifu, for *leaving* forbidden zones — it never
+punishes him for entering them. Raspberry Pi 5 vision (ArUco) + ESP32 arousal
+state machine + Arduino real-time executor, wrapped in fail-safes designed
+around one hard constraint: **Shifu is afraid of moving objects**, so robot
+motion is a rationed hazard introduced over weeks, not a free actuator.
 
----
-
-## Architecture — the data-flow chain
-
-```
-  Sensors (PIR, ultrasonic)
-        │
-        ▼
-  ┌───────────┐   UART serial    ┌───────────┐   WiFi / HTTP    ┌───────────────┐
-  │  ESP32    │ ───────────────▶ │  Arduino  │                  │ Raspberry Pi  │
-  │  (brain)  │   FORWARD/STOP/  │  (limbs)  │                  │ (eyes + face) │
-  │           │   DISPENSE...    │           │                  │               │
-  │  state    │ ◀─────────────── │ motors +  │                  │ camera/vision │
-  │  machine  │      (ACKs)      │ dispenser │                  │ + dashboard   │
-  └───────────┘                  └───────────┘                  └───────────────┘
-        │                                                               ▲
-        └───────────────── WiFi / HTTP POST /ingest ────────────────────┘
-                              (state pushed up to the dashboard)
-```
-
-| Device | Role | Runs |
-|--------|------|------|
-| **ESP32** | The brain. Reads sensors, runs the state machine, *decides*. Talks both ways. | `State_Machine_WiFi/` |
-| **Arduino Uno** | Dumb, reliable executor. Precise real-time control of motors + dispenser servo + buzzer. | `Treat_Dispenser_CANIS/` |
-| **Raspberry Pi 5** | Heavy lifting neither MCU can do: OpenCV vision + the Flask dashboard. | `dashboard/` |
-
-**Why split this way:** the Arduino is great at precise 5 V servo/motor timing — keep
-it dumb. The ESP32 has WiFi + enough compute for the state machine and can coordinate
-both other devices. The Pi does vision (OpenCV) and serves the web UI.
+> Proposed drop-in replacement for the root `README.md`. Links assume it sits
+> at the repo root; the `optimized/` tree holds the hardened sources and the
+> full documentation set.
 
 ---
 
-## Repository layout
+## Why this exists
+
+Consistent, precisely-timed reinforcement is the thing owners are worst at and
+machines are best at. But the obvious design — a robot that "corrects" by
+approaching the dog — would be actively harmful to a movement-fearful animal.
+CANIS inverts it:
+
+1. **Reward leaving, never punish entering.** The salient events in the dog's
+   world stay appetitive (a marker tone that predicts food), not threatening.
+2. **Motion is gated, not assumed.** A single explicit `EXPOSURE_LEVEL`
+   (0 = never move · 1 = pivot only, never approach · 2 = brief gentle
+   approach) sits between "the robot decided" and "the robot moves". It boots
+   at 0, rises one step at a time, and only on logged evidence that the dog is
+   comfortable.
+3. **The longitudinal record is the point.** The graded-exposure process
+   produces a session-by-session fear-response dataset for one real dog —
+   protocol in [`optimized/study/STUDY_PROTOCOL.md`](optimized/study/STUDY_PROTOCOL.md)
+   (n = 1, honestly scoped: no efficacy claims).
+
+## Architecture
 
 ```
-CANIS/
-├── README.md                       ← this file
-├── arduino_secrets.h.example       credentials template (copy into networked sketches)
-├── CANIS_Core/                     ESP32 — THE INTEGRATED BRAIN (use this on hardware)
-│   └── CANIS_Core.ino                sensors + state machine + dispense + buzzer + WiFi + vision poll
-├── Treat_Dispenser_CANIS/          Arduino Uno — treat dispenser (button + serial DISPENSE)
-│   └── Treat_Dispenser_CANIS.ino
-├── dashboard/                      Flask dashboard + command channel (runs on the Pi)
-│   ├── app.py                        /api/state, /ingest, /detect, /command
-│   ├── canis-dashboard.service       systemd unit (auto-start on boot)
-│   ├── requirements.txt
-│   └── templates/index.html
-├── vision/                         Phase 6 — ArUco detection (runs on the Pi)
-│   ├── detect.py                     marker -> POST zone; Pi Camera/USB, --test/--snap, directional labels
-│   └── SETUP.md                      Pi camera setup (CSI ribbon, picamera2, sanity checks)
-├── hardware/                       wiring + power reference
-│   ├── WIRING.md                     every pin, every wire, power architecture, L298N
-│   ├── TESTING.md                    per-subsystem hardware bring-up test guide
-│   └── cad/                          OpenSCAD chassis/dispenser/shell (print AFTER prototype passes)
-├── State_Machine_CANIS/            offline state-machine reference (pure logic, no WiFi)
-├── State_Machine_WiFi/             networked state-machine reference (superseded by CANIS_Core)
-├── Sensors_Test/                   standalone PIR + 3-ultrasonic test
-├── WiFi_Scan_Test/  WiFi_Connect_Test/   ESP32 WiFi diagnostics (kept as tools)
+ Pi 5 (eyes+face)          ESP32 (brain)                Arduino Uno (limbs)
+ ArUco vision ─┐      ┌─ PIR + 3× ultrasonic       ┌─ motion watchdog (1 s)
+ Flask dash ───┼─WiFi─┤  arousal integrator   UART ┤  L298N + motors
+ event log ────┘      └─ CALM/AROUSAL/CORRECTION ──┘  servo gate + marker
+                          EXPOSURE gate               beam-break jam sensor
 ```
 
-> Eventual GitHub structure (`firmware/esp32/`, `firmware/arduino/`, `vision/`,
-> `dashboard/`, `hardware/`) is a Phase 10 reorg — not done yet. The flat layout
-> above is the current reality.
+Three tiers, matched to strengths and isolated as failure domains: the Uno is
+a deliberately dumb real-time executor whose **motion watchdog stops the motors
+within ~1 s of command silence** — so a crashed brain, a loose wire, or a WiFi
+storm all converge on a *stopped* robot. The ESP32 runs a rate-driven arousal
+integrator (+30/s during confirmed detection, −12/s decay) through a
+hysteresis state machine; dropping back to CALM is what earns the treat. The
+Pi does what MCUs can't: ArUco marker vision, the live dashboard, and the
+append-only study log.
 
----
+Full diagrams (system, state machine, dispense sequence, data flow):
+[`optimized/docs/ARCHITECTURE.md`](optimized/docs/ARCHITECTURE.md).
 
-## The state machine (the architectural core)
+## Safety mechanisms
 
-Three states, driven by an **arousal** level (0–100):
+| Mechanism | Trigger | Response |
+|---|---|---|
+| Motion watchdog (Arduino) | 1 s without a fresh command | motors stop — needs nothing else alive |
+| Exposure gate | every correction cycle | no/limited motion; **boots at level 0** |
+| Never-approach invariant | `FORWARD` bearing below level 2 | rewritten to an in-place pivot |
+| Immediate STOP on disengage | leaving CORRECTION | halt now, don't wait for the watchdog |
+| Watch-only AROUSAL state | arousal 20–70 | observe, never act |
+| Confirmation filter + warm-up | raw sensor blips / PIR warm-up | 3-consecutive-read hysteresis; boot mask |
+| dt clamp + vision-latch TTL | loop stalls / dead Pi mid-detection | no phantom CORRECTION, ever |
+| Reward cooldown + session cap | < 20 s gap or > 30/session | treat held (over-feeding & hopper safety) |
+| Jam detection + fault | beam-break sees no drop (×2) | dispenser goes **silent** — no marker without a treat |
+| Dashboard auth + validation | unauthenticated LAN request | 401; all inputs bounded |
 
-| State | Meaning | Behavior |
-|-------|---------|----------|
-| `CALM` | Baseline, settled | Rewards *sustained* calm (after warm-up, ≥30 s apart) |
-| `AROUSAL` | Something detected, watching | Monitor only — **no intervention** |
-| `CORRECTION` | Bad behavior confirmed | 800 Hz disengage buzzer + orient toward zone, every 2 s |
+Every row has a written test procedure: [`optimized/docs/SAFETY.md`](optimized/docs/SAFETY.md).
 
-Arousal is **rate-driven**: while *any* detection is active (local PIR/ultrasonic
-**or** a remote vision call from the Pi) it **rises** at `+30/sec`; it always
-**decays** at `12/sec`, so presence climbs (net `+18/sec`) and absence settles.
-Crossing `20` → `AROUSAL`, crossing `70` → `CORRECTION`. Dropping back to `CALM`
-is what earns a reward — CANIS rewards *leaving*, never punishes entering.
+## Repository map
 
-A confirmed detection holds arousal up while it lasts (so a lingering dog isn't
-wrongly "rewarded for leaving"). Rewards are rate-limited: a 20 s cooldown + a
-30/session cap so the hopper can't empty. Power & pinout: see
-[`hardware/WIRING.md`](hardware/WIRING.md).
-
-**The key design idea:** dropping back into `CALM` from `AROUSAL`/`CORRECTION` means the
-dog disengaged / left the zone — and *that* is what gets rewarded. CANIS rewards
-**leaving**, never punishes entering.
-
-All thresholds are **empirical** — they get tuned against Shifu's real observed
-behavior, not finalized in code. The same tunables live in both the `.ino` files and
-`dashboard/app.py`; keep them in sync.
-
-Right now sensors are stubbed: type `t` (trigger) / `r` (reset) into the ESP32 Serial
-Monitor @ **115200** to drive the state machine by hand. Phase 4 replaces those keys
-with confirmed PIR/ultrasonic reads.
-
----
-
-## The dashboard
-
-Flask app on the Pi. The ESP32 **pushes** its state to `POST /ingest`; the dashboard
-serves the latest from `GET /api/state` and the browser polls it every second.
-
-- If no ESP32 data has arrived in the last 5 s, it **falls back to a built-in
-  simulator** (mirrors the `.ino` logic) so the page is never blank during a demo.
-  The footer says which one you're seeing: *"live data — ESP32"* vs *"demo data —
-  simulator"*.
-- The ESP32 has **no wall clock**, so it sends raw counters only. The Pi watches
-  `reward_count` tick up and stamps `last_reward_time` with its own clock. All
-  time-of-day logic stays on the device that knows the time.
-
-### State JSON (`/api/state`)
-```json
-{
-  "state": "CORRECTION",
-  "arousal": 75.0,
-  "arousal_max": 100.0,
-  "intervention_count": 1,
-  "reward_count": 1,
-  "last_reward_time": 1782391937.8,
-  "uptime_sec": 42,
-  "source": "esp32",
-  "ts": 1782391937.9
-}
+```
+CANIS_Core/              ESP32 integrated brain (original)
+Treat_Dispenser_CANIS/   Arduino executor: dispenser + motors (original)
+State_Machine_*/         reference sketches (offline / WiFi state machine)
+Sensors_Test/  WiFi_*/   bring-up & diagnostic sketches
+dashboard/               Flask dashboard (original)
+vision/                  ArUco detection + Pi camera setup (original)
+hardware/                WIRING.md · TESTING.md · OpenSCAD CAD + STLs
+paper/                   systems-paper draft (honest n=1 framing)
+optimized/               ★ hardened duplicates + full docs — start here
+├── canis_config.h / dashboard/canis_config.py   single-source tunables (+ parity test)
+├── CANIS_Core/ · Treat_Dispenser_CANIS/ · vision/ · dashboard/   [OPT-1..14]
+├── tests/               51 pure-logic tests (pytest, no hardware needed)
+├── study/               STUDY_PROTOCOL.md · analyze_sessions.py
+├── docs/                ARCHITECTURE.md · SAFETY.md
+├── reviews/             engineering/admissions reviews · roadmap · risks
+└── OPTIMIZATIONS.md     every change, file:line-referenced
 ```
 
----
+**What `optimized/` is:** after the original build worked end-to-end, I went
+back through every file myself and ran a deliberate review-and-hardening pass
+— with AI tooling assisting the search-and-fix loop — looking for exactly the
+kind of bugs that hide in state machines and safety-critical code (the stale
+vision latch, the level-1 forward-drive bug, config values that had drifted
+between the `.ino` files and the dashboard). Every change is file:line-referenced
+in [`optimized/OPTIMIZATIONS.md`](optimized/OPTIMIZATIONS.md), and the findings
+that motivated them are in
+[`optimized/reviews/ENGINEERING_REVIEW.md`](optimized/reviews/ENGINEERING_REVIEW.md).
+I decided what to fix and why; the tooling sped up the search, not the
+judgment. `optimized/` is that hardened, fully-documented result — the
+original folders stay as-built and unmodified so the before/after is honest
+and checkable.
 
-## How to run
+## Quick start
 
-### Dashboard (Pi)
+**Dashboard (Pi):**
 ```bash
-cd dashboard
+cd optimized/dashboard
 pip3 install -r requirements.txt
-python3 app.py
-hostname -I            # note the Pi's IP, e.g. 192.168.1.50
+export CANIS_TOKEN=$(openssl rand -hex 16)   # shared secret; see the .service file
+python3 app.py                                # dev; waitress unit for real use
 ```
-Open `http://<pi-ip>:5000` from your phone (same WiFi). With no ESP32 connected
-you'll see the simulator loop running.
+Open `http://<pi-ip>:5000`. With no ESP32 it shows a clearly-labeled simulator.
 
-### ESP32 ↔ Pi link
-1. **Credentials:** copy `arduino_secrets.h.example` into each networked sketch
-   folder (`CANIS_Core/`, `State_Machine_WiFi/`) as `arduino_secrets.h` and fill in:
-   ```cpp
-   #define SECRET_SSID    "YOUR_WIFI_NAME"      // 2.4GHz only
-   #define SECRET_PASS    "YOUR_WIFI_PASSWORD"
-   #define SECRET_PI_HOST "192.168.1.50"        // Pi IP from `hostname -I`
-   ```
-   `arduino_secrets.h` is gitignored, so credentials never get committed.
-2. Pi, ESP32, and phone all on the **same WiFi**.
-3. Arduino IDE → Boards Manager → install **"esp32 by Espressif"** → select your ESP32
-   board → flash **`CANIS_Core`** (the full integrated brain; `State_Machine_WiFi` is
-   just a simpler reference). Serial Monitor @ **115200**.
-4. Tap `t` a few times → arousal climbs, dashboard footer flips to *"live data —
-   ESP32"*, state card changes color, counters move. (Pins & power:
-   [`hardware/WIRING.md`](hardware/WIRING.md).)
+**Firmware (ESP32 + Uno):** copy `arduino_secrets.h.example` into
+`optimized/CANIS_Core/` as `arduino_secrets.h` (gitignored) and fill in WiFi,
+Pi IP, and the same token. Flash `optimized/CANIS_Core` (board: *esp32 by
+Espressif*, monitor 115200) and `optimized/Treat_Dispenser_CANIS` (9600).
+Bring-up order & pass criteria: [`hardware/TESTING.md`](hardware/TESTING.md);
+pinout & power: [`hardware/WIRING.md`](hardware/WIRING.md).
 
-### Treat dispenser (Arduino Uno)
-Standalone and bench-tested. Push the button (pin 2) → buzzer marker → servo gate
-opens ~150 ms → closes. `GATE_OPEN_MS` is the main reliability knob; the narrowed
-tube "throat" (one treat at the gate at a time) matters more than timing.
+**Vision (Pi):** [`vision/SETUP.md`](vision/SETUP.md), then
+`python3 optimized/vision/detect.py --zone kitchen`.
 
----
+**Tests (any machine, no hardware):**
+```bash
+python3 -m pytest optimized/tests/    # 51 tests: state machine, safety
+                                      # invariants, config parity, event log
+```
 
-## Build status (by phase)
+**Study tooling:**
+```bash
+python3 optimized/study/analyze_sessions.py --generate-example ex.jsonl   # SYNTHETIC demo
+# real data: download /export/sessions.csv from the dashboard
+```
 
-| Phase | What | Status |
-|-------|------|--------|
-| 1 | Mobility (motors + L298N) | ✅ **Hardware-tested**: L298N differential drive, both channels PWM-matched, all 5 commands, direction tuned on the metal chassis (6 V AA pack). Speeds at 200/220 for bring-up — dial down for exposure |
-| 2 | Treat dispenser | ✅ Bench-tested, works |
-| 3 | ESP32 ↔ Arduino serial | ✅ DISPENSE proven; FORWARD/BACKWARD/LEFT/RIGHT/STOP added (Arduino-side tested; over-link confirms in full integration) |
-| 4 | PIR + ultrasonic sensors | ✅ 1-sensor proven (HW-416A PIR, HC-SR04 w/ 1 kΩ on ECHO). Expanded to **3 ultrasonics** (L/C/R) in firmware; 3-sensor positional test deferred to **post-print** (positions come from the shell paw) |
-| 5 | State machine | ✅ Real outputs out (CANIS_Core.ino): dispense + CORRECTION cue + reward cooldown/cap. "Orient toward zone" now **real** — pulsed motor commands, gated by `EXPOSURE_LEVEL`, watchdog-safe |
-| 6 | Vision / detection | ✅ **End-to-end on hardware**: OV5647 → OpenCV/ArUco detects marker ID 0 → directional zone posted → dashboard `/command` serves it (what the ESP32 polls). Pi Camera via picamera2; `--snap`/`--test` helpers; setup in `vision/SETUP.md` |
-| 7 | Dashboard | ✅ Live ESP32→Pi link + simulator fallback; auto-starts on boot (systemd) |
-| 8 | Power & reliability | 🟡 Firmware-side done; motors run on the 6 V AA pack. Buck converter in hand — **5 V dial-in for the Pi still pending** |
-| 9 | Full integration test | ⬜ Needs the 3-sensor wiring (post-print) + a full-loop run |
-| 10 | Documentation | 🟡 README + `hardware/WIRING.md` + `hardware/TESTING.md` + `vision/SETUP.md` |
+## Status (as of 2026-07-03)
 
-**Running in parallel:** gradual exposure / fear-desensitization with Shifu starts as
-soon as Phase 1 produces a robot that can move at all — it runs on its own
-weeks/months calendar and does not wait for the build to finish.
+All subsystems hardware-tested individually (drive, dispenser, sensors,
+end-to-end vision, live dashboard); full-loop integration with the printed
+shell and the final power rail is the remaining build work — tracked in
+[`optimized/reviews/ROADMAP.md`](optimized/reviews/ROADMAP.md). The behavioral study has
+**not** started; its pre-registered protocol is written and the logging
+pipeline is tested.
 
----
+## Honesty & ethics
 
-## Hardware gotchas (don't skip these)
+One dog, one home, owner-run. The paper draft
+([`paper/canis_paper_draft.md`](paper/canis_paper_draft.md)) claims a
+*system design*, not a behavioral outcome; the study protocol pre-declares its
+limitations and hard welfare stop-criteria (any distress ends the session, and
+repeated distress lowers the exposure level — the dog outranks the data).
 
-- **ESP32 ↔ Arduino serial is 3.3 V vs 5 V.** ESP32→Arduino is fine, but
-  **Arduino TX (5 V) → ESP32 RX needs a level shifter or a 1k/2k voltage divider** or
-  you'll damage the ESP32. (Phase 3.)
-- **Use `SoftwareSerial` on the Uno** (e.g. pins 10/11) for the ESP32 link — the Uno's
-  only hardware UART is shared with USB/Serial Monitor.
-- **L298N needs its own battery power**, separate from the Arduino's logic supply.
-  Runs on the 6 V AA pack — *not* a 9 V PP3 block (can't supply motor current).
-- **Remove the L298N ENA/ENB jumper caps** to get PWM speed control from the Arduino.
-  Leaving them on pins the channel to full speed and fights the PWM — this bit us
-  (one channel looked "dead" until its ENB cap was off *and* pin 5 was wired solid).
-  The separate **+5V-enable jumper stays ON** for a ≤12 V supply.
-- **Loose power-feed terminals = weak/slow motors.** A battery wire not fully clamped
-  drops voltage under load. Strip to bare copper, clamp fully, tug-test.
-- **Three "motor driver" boards from the parts pile were ruled out** — none exposed
-  IN1-4/ENA/ENB digital control pins. L298N is the correct part.
-- **Pi camera needs the CSI adapter ribbon for the Pi 5** — now in hand. Vision runs
-  the Pi Camera via `picamera2` (USB webcam still works via `detect.py --camera usb`).
-  Setup: `vision/SETUP.md`.
-- **Vision needs `opencv-contrib-python`** (not stock OpenCV) for ArUco marker support.
+## License
+
+MIT — see [`LICENSE`](LICENSE).

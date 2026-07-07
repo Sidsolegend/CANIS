@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 460" width="920" height="460" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#222"/>
+    </marker>
+  </defs>
+
+  <text x="460" y="28" text-anchor="middle" font-size="18" font-weight="bold" fill="#111">
+    Figure 1 — CANIS system data flow (three-tier compute split)
+  </text>
+
+  <!-- Pi box -->
+  <rect x="30" y="70" width="260" height="200" rx="8" fill="#ffffff" stroke="#222" stroke-width="1.5"/>
+  <text x="160" y="96" text-anchor="middle" font-size="15" font-weight="bold">Raspberry Pi 5</text>
+  <text x="160" y="114" text-anchor="middle" font-size="12" fill="#444">eyes + face</text>
+  <line x1="46" y1="124" x2="274" y2="124" stroke="#ccc"/>
+  <text x="50" y="146" font-size="12">• ArUco vision (detect.py)</text>
+  <text x="50" y="168" font-size="12">• Flask dashboard (app.py)</text>
+  <text x="50" y="190" font-size="12">• event log (events.jsonl)</text>
+  <text x="50" y="212" font-size="12">• owns the wall clock</text>
+  <text x="50" y="246" font-size="11" fill="#666">simulator fallback if ESP32</text>
+  <text x="50" y="262" font-size="11" fill="#666">silent &gt; 5 s (labeled in UI)</text>
+
+  <!-- ESP32 box -->
+  <rect x="330" y="70" width="260" height="200" rx="8" fill="#ffffff" stroke="#222" stroke-width="1.5"/>
+  <text x="460" y="96" text-anchor="middle" font-size="15" font-weight="bold">ESP32</text>
+  <text x="460" y="114" text-anchor="middle" font-size="12" fill="#444">brain</text>
+  <line x1="346" y1="124" x2="574" y2="124" stroke="#ccc"/>
+  <text x="350" y="146" font-size="12">• PIR + 3× ultrasonic (L/C/R)</text>
+  <text x="350" y="168" font-size="12">• arousal integrator + FSM</text>
+  <text x="350" y="190" font-size="12">  (CALM / AROUSAL / CORRECTION)</text>
+  <text x="350" y="212" font-size="12">• EXPOSURE_LEVEL gate (welfare)</text>
+  <text x="350" y="246" font-size="11" fill="#666">decides; never blocks on</text>
+  <text x="350" y="262" font-size="11" fill="#666">vision — it polls the Pi</text>
+
+  <!-- Uno box -->
+  <rect x="630" y="70" width="260" height="200" rx="8" fill="#ffffff" stroke="#222" stroke-width="1.5"/>
+  <text x="760" y="96" text-anchor="middle" font-size="15" font-weight="bold">Arduino Uno</text>
+  <text x="760" y="114" text-anchor="middle" font-size="12" fill="#444">limbs (dumb, real-time)</text>
+  <line x1="646" y1="124" x2="874" y2="124" stroke="#ccc"/>
+  <text x="650" y="146" font-size="12">• motion watchdog (auto-STOP</text>
+  <text x="650" y="164" font-size="12">  after 1000 ms silence)</text>
+  <text x="650" y="186" font-size="12">• L298N driver + 2 motors</text>
+  <text x="650" y="208" font-size="12">• servo gate + marker buzzer</text>
+  <text x="650" y="230" font-size="12">• beam-break jam sensor</text>
+
+  <!-- Pi <-> ESP32 arrow -->
+  <line x1="290" y1="150" x2="330" y2="150" stroke="#222" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="310" y="300" text-anchor="middle" font-size="11.5">WiFi / HTTP</text>
+  <text x="310" y="316" text-anchor="middle" font-size="11.5">POST /ingest (1 Hz + on change)</text>
+  <text x="310" y="332" text-anchor="middle" font-size="11.5">GET /command (1 Hz poll)</text>
+  <line x1="230" y1="270" x2="230" y2="290" stroke="#bbb"/>
+  <line x1="230" y1="290" x2="390" y2="290" stroke="#bbb"/>
+  <line x1="390" y1="270" x2="390" y2="290" stroke="#bbb"/>
+
+  <!-- ESP32 <-> Uno arrow -->
+  <line x1="590" y1="150" x2="630" y2="150" stroke="#222" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <text x="610" y="300" text-anchor="middle" font-size="11.5">UART 9600, one-way + ACK/JAM</text>
+  <text x="610" y="316" text-anchor="middle" font-size="11.5">FORWARD/LEFT/RIGHT/STOP/DISPENSE</text>
+  <text x="610" y="332" text-anchor="middle" font-size="11.5">re-pulsed every 500 ms while moving</text>
+  <line x1="530" y1="270" x2="530" y2="290" stroke="#bbb"/>
+  <line x1="530" y1="290" x2="690" y2="290" stroke="#bbb"/>
+  <line x1="690" y1="270" x2="690" y2="290" stroke="#bbb"/>
+
+  <!-- footer note -->
+  <text x="460" y="400" text-anchor="middle" font-size="12" fill="#333">
+    Failure-domain property: the Uno needs nothing else alive to stop safely — a crashed brain,
+  </text>
+  <text x="460" y="418" text-anchor="middle" font-size="12" fill="#333">
+    a dropped wire, or a dead link all converge on "motors stop within ~1 s" (§3.4).
+  </text>
+  <text x="460" y="445" text-anchor="middle" font-size="10.5" fill="#777">
+    Source: optimized/docs/ARCHITECTURE.md §1 (system block diagram)
+  </text>
+</svg>

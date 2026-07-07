@@ -21,6 +21,28 @@ review-identified fixes:
            env vars instead of source constants you had to hand-edit per camera
            (orig detect.py:42-50). One code copy now serves every room.
 
+  [OPT-12] Marker-loss GRACE PERIOD (vision_logic.DetectionGrace). ArUco loses
+           the collar marker for a few frames whenever the dog turns his head;
+           without a grace the posted detection flapped, and the ESP32's
+           arousal saw-toothed — which could reward "leaving" at a dog that
+           merely looked away. The last zone is now held for CANIS_VISION_GRACE_S
+           (default 1.5 s) after the last real sighting. Deliberate trade-off:
+           the genuine "dog left" clear (and thus the leaving-reward) is
+           delayed by up to the same amount — keep it small.
+  [OPT-13] Stale/FROZEN-frame guard (vision_logic.FrozenFrameGuard). A wedged
+           camera driver can return the SAME buffer forever: reads "succeed",
+           so the [OPT-6b] failure-reconnect never fires while the system
+           watches a frozen photo of an empty room. Frames are fingerprinted
+           (cheap subsample); too many identical frames in a row forces a
+           camera reopen.
+  [C6]     Blur-guard skip-ratio telemetry (vision_logic.BlurSkipMonitor). The
+           blur gate (is_sharp) rejects low-variance frames, which at dusk means
+           LOW LIGHT rejecting ~100% of frames — vision then silently contributes
+           nothing (ENGINEERING_REVIEW §4.5). The skip ratio is now tracked over
+           a rolling window (CANIS_BLUR_WINDOW_S) and an ALERT is logged when it
+           exceeds CANIS_BLUR_ALERT_RATIO (default > 90% / 60 s), so a blackout
+           is visible instead of silent.
+
   Token [OPT-2]: if the dashboard requires a shared secret, pass --token or set
   CANIS_TOKEN; it is sent as the X-CANIS-Token header on every POST.
 
@@ -34,6 +56,10 @@ Config precedence: CLI arg > env var > default.
 Test the Pi->ESP32 channel without a camera:
     python3 detect.py --test
     python3 detect.py --test --side left --zone hallway
+
+Bring-up camera check [C7] (replaces the manual step in hardware/TESTING.md):
+    python3 detect.py --selftest                 # PASS/FAIL on ArUco detection
+    python3 detect.py --selftest --camera usb    # with concrete remediation tips
 """
 
 import argparse
@@ -47,6 +73,9 @@ import urllib.error
 
 import cv2
 
+from vision_logic import (DetectionGrace, FrozenFrameGuard,  # [OPT-12/13] pure logic,
+                          BlurSkipMonitor)                   # [C6] all unit-tested
+
 # ---------------- Static defaults (rarely changed; still overridable) ----------------
 CAM_INDEX      = int(os.environ.get("CANIS_CAM_INDEX", "0"))
 FRAME_SIZE     = (640, 480)
@@ -56,6 +85,16 @@ POST_EVERY_S   = float(os.environ.get("CANIS_POST_EVERY_S", "1.0"))
 BLUR_THRESHOLD = float(os.environ.get("CANIS_BLUR_THRESHOLD", "40.0"))
 READ_FAIL_MAX  = 10      # consecutive bad reads before we tear down + reconnect
 RECONNECT_MAX_BACKOFF = 5.0
+GRACE_S        = float(os.environ.get("CANIS_VISION_GRACE_S", "1.5"))   # [OPT-12]
+FROZEN_MAX     = int(os.environ.get("CANIS_FROZEN_MAX", "30"))          # [OPT-13]
+BLUR_WINDOW_S    = float(os.environ.get("CANIS_BLUR_WINDOW_S", "60.0"))   # [C6]
+BLUR_ALERT_RATIO = float(os.environ.get("CANIS_BLUR_ALERT_RATIO", "0.9")) # [C6]
+
+
+def frame_signature(gray):
+    """Cheap fingerprint for the frozen-frame guard: a coarse subsample. Any
+    live sensor has noise, so identical signatures ~never repeat on real video."""
+    return gray[::32, ::32].tobytes()
 
 
 # ---------------- Async POST worker [OPT-6a] ----------------
@@ -234,7 +273,67 @@ def parse_args():
                     help="side label to use in --test mode")
     ap.add_argument("--snap", action="store_true",
                     help="capture ONE frame, save it, report markers seen, and exit")
+    ap.add_argument("--selftest", action="store_true",
+                    help="[C7] open the camera, grab a few frames, PASS/FAIL on ArUco "
+                         "detection with remediation tips, and exit (bring-up check)")
     return ap.parse_args()
+
+
+# ---------------- Commissioning self-test [C7] ----------------
+SELFTEST_TIMEOUT_S = 5.0     # stop once we've looked this long
+SELFTEST_MAX_FRAMES = 60     # ...or after this many frames, whichever comes first
+
+
+def run_selftest(src, detector, marker_ids):
+    """[C7] One-shot camera bring-up check. Replaces the manual camera step in
+    hardware/TESTING.md (Test 5): grab a handful of frames, look for a dog marker,
+    and print a clear PASS/FAIL with concrete remediation. Returns True on PASS."""
+    print(f"[C7] vision self-test: looking for ArUco IDs {sorted(marker_ids)} "
+          f"for up to {SELFTEST_TIMEOUT_S:.0f}s...")
+    start = time.time()
+    frames = 0
+    sharp_frames = 0
+    seen_any = set()          # every marker id seen (even non-dog)
+    found = False
+    while time.time() - start < SELFTEST_TIMEOUT_S and frames < SELFTEST_MAX_FRAMES:
+        gray = src.read_gray()
+        if gray is None:
+            time.sleep(0.05)
+            continue
+        frames += 1
+        if is_sharp(gray):
+            sharp_frames += 1
+        _, ids, _ = detector.detectMarkers(gray)
+        if ids is not None:
+            for i in ids.flatten():
+                seen_any.add(int(i))
+            if seen_any & marker_ids:
+                found = True
+                break
+
+    print(f"[C7] captured {frames} frame(s); {sharp_frames} sharp; "
+          f"markers seen: {sorted(seen_any) or 'none'}")
+
+    if found:
+        print("[C7] PASS — dog marker detected. Vision pipeline is good to go.")
+        return True
+
+    # FAIL: give the operator the most likely cause first.
+    print("[C7] FAIL — no dog marker detected. Try, in order:")
+    if frames == 0:
+        print("      * No frames captured — check the camera cable/connection and "
+              "that the right --camera backend (pi/usb) is selected.")
+    elif sharp_frames == 0:
+        print("      * Every frame was blurry/low-variance — check FOCUS and add "
+              "LIGHTING (a dusk-dark room reads as blur and detects nothing).")
+    elif seen_any and not (seen_any & marker_ids):
+        print(f"      * Markers {sorted(seen_any)} were seen but none match the dog "
+              f"IDs {sorted(marker_ids)} — pass the right --marker-ids.")
+    else:
+        print("      * Move the marker CLOSER and square-on to the camera.")
+        print("      * Improve LIGHTING and check FOCUS.")
+        print("      * Confirm the printed tag is the DICT_4X4_50 dictionary.")
+    return False
 
 
 def main():
@@ -269,10 +368,20 @@ def main():
             src.release()
         return
 
+    if args.selftest:
+        try:
+            ok = run_selftest(src, detector, marker_ids)   # [C7] bring-up camera check
+        finally:
+            src.release()
+        raise SystemExit(0 if ok else 1)
+
     print(f"CANIS vision up [{args.camera}]. zone={args.zone!r}, marker IDs "
           f"{sorted(marker_ids)}, directional={args.directional}. Ctrl+C to stop.")
 
     poster.start()
+    grace = DetectionGrace(GRACE_S)          # [OPT-12]
+    frozen = FrozenFrameGuard(FROZEN_MAX)    # [OPT-13]
+    blur_mon = BlurSkipMonitor(window_s=BLUR_WINDOW_S, alert_ratio=BLUR_ALERT_RATIO)  # [C6]
     frame_i = 0
     last_post = 0.0
     read_fails = 0
@@ -293,35 +402,60 @@ def main():
                     except Exception as e:
                         print(f"camera reopen failed: {e}")
                     read_fails = 0
+                    frozen.reset()
                 continue
             read_fails = 0
             backoff = 0.1
 
+            # [OPT-13] a "successful" read can still be a wedged driver replaying
+            # one buffer forever; fingerprint it and reopen on a frozen streak.
+            if frozen.update(frame_signature(gray)):
+                print("frozen stream detected (identical frames) -> reopening camera")
+                try:
+                    src.reopen()
+                except Exception as e:
+                    print(f"camera reopen failed: {e}")
+                frozen.reset()
+                continue
+
             frame_i += 1
             if frame_i % PROCESS_EVERY:
                 continue
-            if not is_sharp(gray):
+
+            # [C6] Blur/low-light guard with skip-ratio telemetry. is_sharp()
+            # rejects low-variance frames (motion blur OR low light); record the
+            # skip so a dusk blackout is logged and alerted, not silent (§4.5).
+            now = time.time()
+            sharp = is_sharp(gray)
+            alert = blur_mon.record(skipped=not sharp, now=now)
+            if alert is not None:
+                print(f"ALERT [blur-guard] {alert['ratio'] * 100:.0f}% of frames skipped "
+                      f"for low sharpness over {alert['window_s']:.0f}s "
+                      f"({alert['skipped']}/{alert['total']}) — low light? vision is "
+                      f"contributing nothing (system on PIR + ultrasonic only).")
+            if not sharp:
                 continue
 
             corners, ids, _ = detector.detectMarkers(gray)
-            if ids is None:
-                continue
-            flat = [int(i) for i in ids.flatten()]
 
             side = "center"
             found = False
-            for marker_id, corner in zip(flat, corners):
-                if marker_id in marker_ids:
-                    found = True
-                    side = marker_side(corner, gray.shape[1])
-                    break
+            if ids is not None:
+                flat = [int(i) for i in ids.flatten()]
+                for marker_id, corner in zip(flat, corners):
+                    if marker_id in marker_ids:
+                        found = True
+                        side = marker_side(corner, gray.shape[1])
+                        break
 
-            if found:
-                now = time.time()
-                if now - last_post >= POST_EVERY_S:
-                    z = zone_label(args.zone, side, args.directional)
-                    poster.send(z)     # [OPT-6a] non-blocking hand-off
-                    last_post = now
+            # [OPT-12] real sighting -> its zone; brief loss -> held zone for
+            # GRACE_S (bridges head-turns); past the grace -> None (real clear).
+            z = grace.update(found,
+                             zone_label(args.zone, side, args.directional) if found else None,
+                             now)
+            if z is not None and now - last_post >= POST_EVERY_S:
+                poster.send(z)     # [OPT-6a] non-blocking hand-off
+                last_post = now
     except KeyboardInterrupt:
         pass
     finally:

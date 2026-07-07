@@ -24,13 +24,34 @@ AROUSAL_EXIT = 12.0
 CORRECTION_ENTER = 70.0
 CORRECTION_EXIT = 60.0
 
-# --- Reward timing (mirror) ---
+# Arousal integrator (mirror of the firmware seam + [OPT-4] dt clamp).
+# Previously these lived only in tests/canis_logic.py — a third hand-typed copy.
+AROUSAL_RISE_PER_SEC = 30.0    # CANIS_AROUSAL_RISE_PER_SEC
+DT_MAX_S = 0.2                 # CANIS_DT_MAX_S
+
+# --- Reward timing / safety (mirror) ---
 CALM_REWARD_MS = 30000
 REWARD_COOLDOWN_MS = 20000
+MAX_SESSION_REWARDS = 30       # CANIS_MAX_SESSION_REWARDS
+
+# --- Vision latch / fault policy (mirror) ---
+VISION_TTL_MS = 4000           # CANIS_VISION_TTL_MS   [OPT-9]
+JAM_FAULT_THRESHOLD = 2        # CANIS_JAM_FAULT_THRESHOLD [OPT-11]
+
+# --- Exposure / welfare gate (mirror) ---
+EXPOSURE_DEFAULT = 0           # CANIS_EXPOSURE_DEFAULT (0=buzzer only, 1=orient, 2=approach)
+EXPOSURE_CONFIRM_MS = 5000     # CANIS_EXPOSURE_CONFIRM_MS  two-step arm->confirm window [C4]
+OBSERVE_ONLY = 0               # CANIS_OBSERVE_ONLY  1 = pure-sensor build, all actuators off [B5]
 
 # --- Dashboard-only knobs (no firmware equivalent) ---
 STALE_AFTER = 5.0    # seconds without an ESP32 POST before falling back to sim
 COMMAND_TTL = 3.0    # seconds a vision detection stays "current" without a new POST
+
+# --- Event log (dashboard-only; longitudinal-study instrumentation) ---
+# Directory override: CANIS_LOG_DIR env var. File: events.jsonl (append-only).
+EVENT_LOG_FILE = "events.jsonl"
+ZONE_EPISODE_GAP_S = 3.0   # zone_seen events further apart than this start a new episode
+                           # (matches COMMAND_TTL: the detection would have expired)
 
 # --- Input-validation bounds for /ingest (defensive server-side limits) ---
 AROUSAL_MIN = 0.0

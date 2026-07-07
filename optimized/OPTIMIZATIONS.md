@@ -14,6 +14,13 @@ the code as `[OPT-n]`.
 | 5 | Non-blocking WiFi reconnect watchdog | `CANIS_Core/CANIS_Core.ino` |
 | 6 | Vision threading + reconnect + config | `vision/detect.py` |
 | 7 | Dispense-ACK (count on delivery) | `CANIS_Core/CANIS_Core.ino`, `Treat_Dispenser_CANIS/Treat_Dispenser_CANIS.ino` |
+| 8 | **[SAFETY]** Level-1 "orient only, never approach" invariant | `CANIS_Core/CANIS_Core.ino` (runStateBehavior) |
+| 9 | Vision-latch TTL (no permanent phantom CORRECTION) | `CANIS_Core/CANIS_Core.ino`, `canis_config.h` |
+| 10 | HTTP deferred while motion is active (watchdog-feed integrity) | `CANIS_Core/CANIS_Core.ino` |
+| 11 | Dispenser jam detection (beam-break) + fault policy | `Treat_Dispenser_CANIS/…ino`, `CANIS_Core/…ino`, `canis_config.h` |
+| 12 | Vision marker-loss grace period | `vision/vision_logic.py`, `vision/detect.py` |
+| 13 | Frozen/stale-frame guard | `vision/vision_logic.py`, `vision/detect.py` |
+| 14 | JSONL event log + study CSV export | `dashboard/event_log.py`, `dashboard/app.py`, `dashboard/templates/index.html`, `study/analyze_sessions.py` |
 
 ---
 
@@ -258,6 +265,220 @@ matters: Arduino 5 V TX into the ESP32's 3.3 V RX **must** go through a level
 shifter or a 1 k/2 k resistor divider — do not wire 5 V straight to the ESP32.
 If you can't add the return line, set `CANIS_USE_DISPENSE_ACK` to `0`; both
 sketches still run and revert to count-on-send.
+
+---
+
+## 8. [SAFETY] Level-1 welfare invariant: orient only, NEVER approach
+
+**What changed.** In `runStateBehavior()` (optimized `CANIS_Core.ino`, tagged
+`[OPT-8][SAFETY]`), when `EXPOSURE_LEVEL < 2` a `FORWARD` bearing is rewritten
+to a token in-place pivot (`LEFT`) before being sent to the Arduino.
+
+**Why (original).** `CANIS_Core/CANIS_Core.ino:354-359`: at exposure level 1
+("orient only: pivot to face the zone, never approach") the code did
+`startMotion(dir, ORIENT_MS, now)` with `dir` from `localBearing()` /
+`zoneToDir()`. Both can legitimately return `"FORWARD"` — the CENTRE ultrasonic
+being nearest, or `zoneToDir`'s default — and the Arduino executes `FORWARD` as
+a straight drive **at the dog**. That silently violated the project's central
+welfare promise at the exact level where trust is being built.
+
+**Better/safer.** Level 1 now cannot close distance on the dog under any
+bearing. Unit-tested (`safe_orient_dir` in `tests/canis_logic.py`).
+
+---
+
+## 9. Vision-latch TTL (no permanent phantom CORRECTION)
+
+**What changed.** `visionActive` now expires locally: `pollCommand()` stamps
+`lastVisionRefresh` on every successful poll that sees the dog, and a new
+`serviceVisionTtl()` clears the latch if no refresh arrives within
+`CANIS_VISION_TTL_MS` (4 s; `#error`-guarded to exceed 2× the poll period).
+
+**Why (original).** `CANIS_Core/CANIS_Core.ino:497-531`: the **only** code path
+that could clear `visionActive` was a *successful* poll returning `NONE`. If
+WiFi or the Pi died while the latch was set (the failure branch at `:527-529`
+only sets a back-off), arousal was held up **forever**: a permanent phantom
+`CORRECTION` — buzzer every 2 s and, at exposure ≥ 1, repeated orient motions —
+aimed at a dog that may have left long ago. The worst failure mode of the whole
+system, reachable by a router reboot.
+
+**Better/safer.** A dead Pi now degrades to "no vision input" within 4 s, the
+same posture as never having had vision. Mirrored and tested as `VisionLatch`
+in `tests/canis_logic.py`.
+
+---
+
+## 10. HTTP deferred while a motion is active
+
+**What changed.** `reportToPi()` and `pollCommand()` return immediately while
+`moveCmd` is active; the deferred report fires as soon as the motion ends.
+
+**Why (original).** The loop is single-threaded. During an active motion the
+ESP32 must re-send the move command every `MOVE_PULSE_MS` (500 ms) to feed the
+Arduino's 1000 ms watchdog. But `reportToPi` + `pollCommand` can each block up
+to `CANIS_HTTP_TIMEOUT_MS` (300 ms) — back-to-back, plus WiFi latency and
+`readSensors`' ~50 ms of `pulseIn`, one loop iteration can exceed 500 ms and
+push the watchdog-feed gap past 1000 ms mid-orient. Result: the Arduino
+auto-stops and the next pulse restarts the motors — a visible stutter *at the
+dog* during the most welfare-sensitive moment. (Fail direction was safe — halt,
+not runaway — but a jerky, stop-start robot is exactly what frightens Shifu.)
+
+**Better/safer.** Motions are short (≤ 700 ms orient / 400 ms approach), so
+pausing telemetry during them costs ~1 report and guarantees smooth, continuous
+motion pulses.
+
+---
+
+## 11. Dispenser jam detection (current-less: expected-beam-break timeout)
+
+**What changed.**
+
+- **Arduino** (`Treat_Dispenser_CANIS.ino`, `[OPT-11]`): an IR **beam-break
+  pair across the chute exit** (one digital input, `A0`, `INPUT_PULLUP`;
+  no current sensing, no shield). After the gate cycles, the sketch waits up to
+  `DROP_TIMEOUT_MS` (600 ms) for the falling treat to interrupt the beam:
+  seen → `ACK`; not seen → **one retry** with a longer gate hold
+  (`RETRY_EXTRA_MS`); still nothing → reply **`JAM`**. Compile-gated behind
+  `JAM_SENSOR_ENABLED` (default **0** = identical to the plain [OPT-7] sketch
+  until the sensor is physically installed).
+- **ESP32** (`CANIS_Core.ino`): `serviceAck()` now understands `JAM` — the
+  treat is not counted, `jam_count` climbs (and is reported to the dashboard),
+  and after `CANIS_JAM_FAULT_THRESHOLD` (2) **consecutive** jams the dispenser
+  is marked FAULTED: further automatic rewards are suppressed, because a marker
+  tone with no treat behind it actively erodes the conditioned signal. Manual
+  `'d'` (after fixing the hopper) test-fires and clears the fault. An `ACK`
+  resets the consecutive-jam streak. `CANIS_ACK_TIMEOUT_MS` was raised
+  1500 → 2500 ms to cover the retry path (~1.8 s worst case).
+- **Dashboard**: `jam_count` is validated on `/ingest`, logged as a
+  `dispenser_jam` event, shown as a stat, and a red fault banner appears while
+  `jam_count > 0`.
+
+**Why (original).** `Treat_Dispenser_CANIS.ino:193-208`: `dispense()` had **no
+idea whether a treat actually fell** — a wedged treat or empty hopper produced
+a marker beep, an open-shut gate, and (pre-OPT-7) a counted reward. For a
+conditioning system the treat *is* the payload; silently not delivering it is a
+data-integrity **and** a training-integrity failure. [OPT-7]'s ACK confirmed
+the *gate cycled*, not that a *treat fell* — this closes that gap with actual
+physical verification.
+
+**Better/safer.** Delivery is now verified by a physical sensor; a fault makes
+the system go quiet instead of beeping at the dog with an empty hand. Policy
+mirrored and tested as `DispenserHealth` in `tests/canis_logic.py`.
+
+---
+
+## 12. Vision marker-loss grace period
+
+**What changed.** `vision/vision_logic.py` adds `DetectionGrace` (pure logic,
+unit-tested): a real sighting reports its zone; after the marker vanishes the
+last zone is **held** for `CANIS_VISION_GRACE_S` (default 1.5 s), then clears.
+`detect.py` now feeds every processed frame through it, so brief marker losses
+no longer stop the 1 Hz posting.
+
+**Why (original/optimized-v1).** ArUco loses a collar marker for a few frames
+whenever the dog turns his head or the marker tilts past ~60°. Detection then
+flapped: the dashboard's `COMMAND_TTL` (3 s) expired and re-armed, the ESP32's
+`visionActive` toggled, and arousal saw-toothed across a threshold —
+potentially firing a "reward for leaving" at a dog that merely looked away
+(rewarding the wrong behavior corrupts the training) or re-triggering
+interventions.
+
+**Trade-off (deliberate, documented).** A genuine departure now clears up to
+1.5 s later, delaying the leaving-reward by the same amount. Kept small
+relative to the ~5 s arousal decay; tune with the `CANIS_VISION_GRACE_S` env.
+
+---
+
+## 13. Frozen/stale-frame guard
+
+**What changed.** `vision_logic.FrozenFrameGuard`: every frame is
+fingerprinted (a cheap `[::32, ::32]` subsample); `FROZEN_MAX` (30) identical
+fingerprints in a row ⇒ the stream is frozen ⇒ `detect.py` reopens the camera.
+
+**Why.** A wedged camera driver (seen with UVC webcams, occasionally
+picamera2) can keep returning the **same buffer** forever. Reads "succeed", so
+the [OPT-6b] read-*failure* reconnect never fires — the system believes it has
+live vision while actually watching a frozen photo of an empty room. Silent
+sensor loss in a safety-relevant perception path must be detected, not assumed
+away. Live sensors always carry noise, so identical fingerprints essentially
+never occur on real video (unit-tested).
+
+---
+
+## 14. JSONL event log + longitudinal-study export
+
+**What changed.**
+
+- `dashboard/event_log.py` (new): append-only **JSONL event log** — schema
+  documented in the module docstring — recording `session_start`,
+  `state_transition`, `treat_dispensed`, `dispenser_jam`, `zone_seen`,
+  `exposure_change`, `firmware_reboot`, and `link_gap` events, each stamped
+  with the Pi's wall clock and a session id. Crash-safe (open/append/close per
+  write; the reader tolerates a torn final line).
+- `dashboard/app.py` (`[OPT-14]`): derives those events from `/ingest` deltas
+  and `/detect` posts; adds `GET /export/events.csv`, `GET /export/sessions.csv`
+  (per-session aggregates: state occupancy, corrections, treats, jams, zone
+  episodes/time, first-zone latency, link gaps, reboots, exposure levels), and
+  `GET /api/events`. Log dir: `CANIS_LOG_DIR` (default `dashboard/logs/`,
+  inside the systemd unit's `ReadWritePaths`).
+- `study/analyze_sessions.py` (new): offline CLI over the same
+  `summarize_sessions()` implementation (one aggregator, two entry points — the
+  export and the analyzer can never disagree). `--generate-example` writes a
+  **clearly-marked SYNTHETIC** log for pipeline testing.
+- The ESP32 now also reports `jam_count` and `exposure_level` in its 1 Hz POST
+  so the log captures the welfare knob's position over time.
+
+**Why (original).** The dashboard kept **only the latest snapshot**
+(`app.py:41-75`): the behavioral record evaporated on every refresh. The
+project's stated scientific artifact is a *longitudinal* fear-response record —
+impossible to produce without durable, timestamped session data. This is the
+instrumentation that `study/STUDY_PROTOCOL.md` runs on.
+
+---
+
+## [C7] Commissioning / bring-up tooling (persisted calibration + guided self-test)
+
+**What.** The two bring-up steps that used to mean *physically redoing the
+assembly*, plus the 7-step manual bench doc, are now one-time software actions the
+builder runs once — right after assembly — and the robot stays correctly
+configured from then on.
+
+- **Motor direction is a saved flag, not a lead-swap.** `Treat_Dispenser_CANIS.ino`
+  gains persisted `MOTOR_L_INVERT` / `MOTOR_R_INVERT` booleans (EEPROM) that
+  `setMotor()` XORs into the direction sign. A wheel that spins backward is fixed
+  with `INVL` / `INVR` (toggle + save) instead of swapping that motor's two OUT
+  leads (was `hardware/TESTING.md:28`).
+- **Dispenser flap zero is a saved trim, not a horn re-press.** A persisted
+  `TRIM_OFFSET` (±15°, clamped) shifts `CLOSED_ANGLE`/`OPEN_ANGLE` wherever the
+  servo is driven; `TRIM+` / `TRIM-` nudge + save it (was
+  `hardware/BUILD_GUIDE_v2.md:83`). `CAL?` prints the live calibration.
+- These live on the **Arduino Uno** because that is where `setMotor()` and the
+  servo run; the Uno's persistence primitive is `EEPROM` (`Preferences` is
+  ESP32-only). The ESP32 drives them remotely over the existing link.
+
+**Guided self-test — ESP32 key `c`.** `CANIS_Core.ino` gains one re-runnable,
+entirely serial-driven routine that sequences the old TESTING.md bench checks:
+1. **Motors** — pulses each wheel (`MOTL`/`MOTR`), asks "spin the expected way?
+   [y/n]"; on `n` it flips + persists that motor's invert flag on the Uno
+   (`INVL`/`INVR`) and re-pulses to verify.
+2. **Dispenser** — cycles the flap, asks if it looked right; on `n` offers
+   `+`/`-` trim nudges (`TRIM+`/`TRIM-`) that re-fire so the fix is visible.
+3. **Sensors** — prints all three ultrasonic distances + PIR with PASS/FAIL vs
+   sane thresholds, using the confirmed-read pattern absorbed from
+   `Sensors_Test.ino`. It reads the PIR pin in the **`INPUT_PULLDOWN`** mode
+   `setup()` already set — *not* a re-declared `INPUT` — which fixes the
+   test-vs-firmware pin-mode divergence (TECH_DEBT #5) so the bench test can't
+   show phantom motion the real brain never would.
+
+**Vision — `python3 detect.py --selftest`.** Opens the camera, grabs a handful of
+frames within a short timeout, PASS/FAIL on ArUco detection, and prints concrete
+remediation (cable/backend, focus, lighting, marker distance, wrong marker IDs).
+Runs standalone with just a camera — no dashboard or other CANIS service needed.
+Replaces the manual camera step in `hardware/TESTING.md` Test 5.
+
+**Coverage.** The invert XOR and trim-clamp/angle logic are mirrored as pure
+functions in `tests/canis_logic.py` and unit-tested in `tests/test_calibration.py`
+(hardware-free).
 
 ---
 

@@ -9,6 +9,20 @@ power (6), integration (7) after.
 
 ---
 
+## Results log (2026-07-06)
+
+| Test | Result |
+|---|---|
+| 1 — Motors | **PASS** — fwd/back/pivot/stop all correct |
+| 2 — Dispenser | **DEFERRED** — mechanism works, but tuning (`GATE_OPEN_MS`/throat) happens once it's actually mounted on the chassis, not on the bench |
+| 3 — Sensors | **PASS** — all 3 ultrasonics + PIR clean |
+| 4 — ESP32↔Arduino link | **PASS** |
+| Pi comms (ESP32↔Arduino↔Pi 3-way) | **PASS** — full communication confirmed working |
+
+Only remaining pre-print-greenlight item: dispenser tuning after mounting, then Test 7 (full integration loop) on the assembled chassis.
+
+---
+
 ## Test 1 — Motors (Phase 1) — START HERE
 **Goal:** L298N + motor firmware drive correctly. Arduino only.
 
