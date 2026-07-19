@@ -43,9 +43,24 @@ EXPOSURE_DEFAULT = 0           # CANIS_EXPOSURE_DEFAULT (0=buzzer only, 1=orient
 EXPOSURE_CONFIRM_MS = 5000     # CANIS_EXPOSURE_CONFIRM_MS  two-step arm->confirm window [C4]
 OBSERVE_ONLY = 0               # CANIS_OBSERVE_ONLY  1 = pure-sensor build, all actuators off [B5]
 
+# --- Mobile drivetrain + CBF safe motion (mirror of canis_config.h block) ---
+# See docs/INTERFACE_CONTRACT.md §3.1 — these back the /config fallback and the
+# dashboard's display-only comfort/CBF panel. Names track the firmware defines.
+MOBILE_ENABLED = 0             # CANIS_MOBILE_ENABLED  (0 = stationary, SAFE default)
+D_MIN_CM = 60                  # CANIS_D_MIN_CM        hard comfort floor (robot->dog)
+D_MAX_CM = 200                 # CANIS_D_MAX_CM        stressed-dog standoff ceiling
+CBF_GAMMA = 0.5                # CANIS_CBF_GAMMA       barrier aggressiveness
+CONTROL_RATE_HZ = 20           # CANIS_CONTROL_RATE_HZ ESP32 wheel PI loop
+ODOM_STREAM_HZ = 10            # CANIS_ODOM_STREAM_HZ  /telemetry + /motion poll rate
+MOTION_CMD_TTL_MS = 600        # CANIS_MOTION_CMD_TTL_MS  stale (v, omega) => STOP
+MAX_LINEAR_MPS = 0.35          # CANIS_MAX_LINEAR_MPS  hard |v| clamp
+MAX_ANGULAR_RPS = 1.5          # CANIS_MAX_ANGULAR_RPS hard |omega| clamp
+
 # --- Dashboard-only knobs (no firmware equivalent) ---
 STALE_AFTER = 5.0    # seconds without an ESP32 POST before falling back to sim
 COMMAND_TTL = 3.0    # seconds a vision detection stays "current" without a new POST
+TELEMETRY_STALE_AFTER = 2.0  # seconds without a /telemetry frame (10 Hz stream) before
+                             # the motion panel shows "no telemetry" (20 missed frames)
 
 # --- Event log (dashboard-only; longitudinal-study instrumentation) ---
 # Directory override: CANIS_LOG_DIR env var. File: events.jsonl (append-only).
@@ -58,3 +73,11 @@ AROUSAL_MIN = 0.0
 COUNT_MAX = 1_000_000          # sane ceiling for reward/intervention/uptime counters
 VALID_STATES = ("CALM", "AROUSAL", "CORRECTION")
 ZONE_MAX_LEN = 32              # longest zone label the ESP32 buffer can hold (visionZone[24]) + slack
+
+# --- Input-validation bounds for the mobile telemetry fields (defensive) ---
+ENC_ABS_MAX = 2**62            # "int (64-bit safe)" cumulative signed encoder counts
+TOF_MAX_M = 100.0              # sane ceiling for tof_m (VL53LX tops out ~4 m anyway)
+ODOM_V_ABS_MAX = 10.0          # sane |odom_v| ceiling, m/s (>> MAX_LINEAR_MPS)
+ODOM_W_ABS_MAX = 20.0          # sane |odom_omega| ceiling, rad/s (>> MAX_ANGULAR_RPS)
+BEARING_ABS_MAX = 180.0        # |bearing_deg| ceiling (± half HFOV in practice)
+NODE_ID_MAX_LEN = 32           # /detect node_id length cap (contract §3)

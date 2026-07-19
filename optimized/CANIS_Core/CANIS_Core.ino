@@ -62,6 +62,22 @@
             landed on 2 (approach) unconfirmed. Now 'm' only ARMS the next level
             and a distinct 'y' commits it, within CANIS_EXPOSURE_CONFIRM_MS; an
             un-confirmed arm auto-expires so it can't be committed later.
+    [MOB]   Mobile drivetrain + CBF safe motion. Wire formats are LAW per
+            docs/INTERFACE_CONTRACT.md; rationale per docs/SAFE_MOTION_CBF_SPEC.md.
+            Compile-gated by CANIS_MOBILE_ENABLED (default 0 = stationary: no
+            /motion poll, no /telemetry stream, no "VEL" verb, encoder pins
+            untouched — wire traffic byte-identical to the pre-upgrade build).
+            When 1: quadrature encoders are counted in hardware on the ESP32
+            PCNT peripheral, odometry (v, omega) + IMU heading + VL53LX ToF
+            range stream to POST /telemetry at CANIS_ODOM_STREAM_HZ (10 Hz),
+            GET /motion "MOVE <v> <omega>"/"STOP" is polled at 10 Hz, clamped
+            (speed caps, never-approach floor, 600 ms freshness TTL), mapped to
+            per-wheel targets and closed by a 20 Hz per-wheel velocity PI into
+            "VEL <pwmL> <pwmR>" on the existing Serial2 grammar. Legacy
+            open-loop word-motion is suppressed in mobile builds; every
+            existing fail-safe (exposure gate, CANIS_NEVER_APPROACH, the Uno's
+            1000 ms watchdog, reboot -> exposure 0) stays supreme, and any
+            sensor/link failure degrades ONE-WAY to STOP/stationary.
 
   NOTE: no arduino_secrets.h value is reproduced here; the include and the
   SECRET_* names are the same public interface as the original.
@@ -75,6 +91,15 @@
 #include <stdlib.h>            // atoi() for parsing the ACK/JAM correlation id [C5]
 #include "canis_config.h"      // [OPT-1] single source of truth (symlink -> ../canis_config.h)
 #include "arduino_secrets.h"   // WiFi/Pi creds — gitignored, see arduino_secrets.h.example
+
+#if CANIS_MOBILE_ENABLED
+// [MOB] ESP32 PCNT peripheral — hardware quadrature counting, zero CPU cost
+// per edge (WHY the encoders live on the ESP32 and not the Uno, see the pin
+// budget note in canis_config.h). This is the legacy IDF driver header: it
+// ships with arduino-esp32 core 2.x and is still present (deprecated) on
+// core 3.x; if a future core drops it, migrate to driver/pulse_cnt.h.
+#include "driver/pcnt.h"
+#endif
 
 // ---------- WiFi / Pi ----------
 const char* WIFI_SSID = SECRET_SSID;
@@ -163,6 +188,22 @@ unsigned long moveUntil      = 0;
 unsigned long lastMovePulse  = 0;
 int           motionPhase    = 0;
 
+// ---------- Roaming / patrol [ROAM] ----------
+// patrolMode = currently wandering (vs engaged/stationary). lastEngageEnd marks
+// when the last dog engagement ended, so roaming waits CANIS_ROAM_RESUME_MS
+// before starting up again (don't lurch off the instant the dog settles).
+bool          patrolMode     = false;
+unsigned long lastEngageEnd  = 0;
+
+// GUARD (correct at a spot) / PLAY (roam + reward-chase + flee) / PLACE (reward
+// settling on his mat). Toggle 'g' / 'p' / 'b'.
+int           robotMode      = CANIS_MODE_DEFAULT;
+
+// PLACE mode bookkeeping: when Shifu was first seen continuously on his mat, and
+// when he was last rewarded for staying there.
+unsigned long placeSince      = 0;
+unsigned long lastPlaceReward = 0;
+
 int EXPOSURE_LEVEL = CANIS_EXPOSURE_DEFAULT;
 
 // ---------- Exposure two-step ARM->CONFIRM [C4] ----------
@@ -195,6 +236,63 @@ int  jamCount         = 0;      // lifetime JAMs this session (reported to Pi)
 int  consecJams       = 0;      // consecutive JAMs; resets on ACK
 bool dispenserFaulted = false;  // true -> suppress treat requests until 'd'
 
+#if CANIS_MOBILE_ENABLED
+// ---------- Mobile drivetrain / CBF safe motion [MOB] ----------
+// Wire formats are LAW per docs/INTERFACE_CONTRACT.md; rationale per
+// docs/SAFE_MOTION_CBF_SPEC.md. This whole block (and every [MOB] function
+// below) compiles away at CANIS_MOBILE_ENABLED=0, so the stationary build's
+// behavior and wire traffic are unchanged.
+//
+// PCNT UNIT ASSIGNMENT (hardware assumption): LEFT encoder = PCNT_UNIT_0,
+// RIGHT encoder = PCNT_UNIT_1; units 2..7 stay free and nothing else in this
+// sketch touches PCNT. Each unit decodes BOTH quadrature channels (full 4x),
+// which is why the 4x-edge figure CANIS_ENC_COUNTS_PER_REV=1320 is consumed
+// as-is. The hardware counter is only 16-bit, so limit events at +/-ENC_H_LIM
+// fold into a 64-bit accumulator in an ISR — enc_l/enc_r are therefore
+// cumulative, SIGNED, wrap-safe, and never reset mid-session (contract §1.1).
+const int16_t ENC_H_LIM = 30000;    // fold point, comfortably inside int16
+volatile int64_t encAccumL = 0;     // ISR-owned overflow accumulators; every
+volatile int64_t encAccumR = 0;     //   access goes through encMux
+portMUX_TYPE encMux = portMUX_INITIALIZER_UNLOCKED;
+
+// Derived drivetrain geometry (compile-time float math from canis_config.h).
+const float MOB_M_PER_COUNT = (CANIS_WHEEL_DIAMETER_MM / 1000.0f) * PI
+                              / (float)CANIS_ENC_COUNTS_PER_REV;   // meters per 4x count
+const float MOB_TRACK_M     = CANIS_WHEEL_BASE_MM / 1000.0f;       // track width, m
+
+// Per-wheel velocity PI gains + feedforward. BRING-UP TUNABLES: they live
+// here (not canis_config.h) until they've been measured against the real
+// drivetrain, then graduate to the single source of truth. KFF assumes the
+// wheel does ~0.5 m/s at full 255 duty on the bench — MEASURE that first;
+// a wrong KFF makes the PI fight the feedforward instead of trimming it.
+const float MOB_KFF        = 255.0f / 0.50f;  // PWM per m/s of target (feedforward)
+const float MOB_KP         = 300.0f;          // PWM per m/s of velocity error
+const float MOB_KI         = 600.0f;          // PWM per (m/s)*s of integrated error
+const float MOB_PI_INT_MAX = 100.0f;          // integrator clamp, PWM units (anti-windup)
+const float MOB_STOP_EPS   = 0.005f;          // |v| AND |omega| below this = stop target
+
+// Live mobile state (contract field names in comments).
+int64_t encL = 0, encR = 0;            // latest cumulative counts (enc_l / enc_r)
+int64_t prevEncL = 0, prevEncR = 0;    // previous control-tick sample (odometry deltas)
+float   odomV     = 0.0f;              // body linear velocity, m/s (+ = forward)
+float   odomOmega = 0.0f;              // body angular velocity, rad/s (+ = CCW / left)
+float   headingDeg = 0.0f;             // [0, 360), CLOCKWISE-positive from boot (§1.1)
+float   tofM = -1.0f;                  // VL53LX range, m; -1.0 = the ONLY no-data sentinel
+unsigned long odomTsMs = 0;            // millis() of the odometry sample (telemetry ts_ms)
+
+float   cmdV = 0.0f, cmdOmega = 0.0f;  // last clamped MOVE target from /motion
+unsigned long lastMotionOkMs = 0;      // millis() of the last good MOVE (0 = never)
+bool    mobileDown = false;            // latched: /motion or /telemetry 404/401 -> stationary
+
+unsigned long lastControlMs    = 0;    // 20 Hz wheel loop scheduler
+unsigned long lastMotionPollMs = 0;    // 10 Hz /motion poll scheduler
+unsigned long lastTelemetryMs  = 0;    // 10 Hz /telemetry stream scheduler
+float   piIntL = 0.0f, piIntR = 0.0f;  // PI integrators (already in PWM units)
+int     lastPwmL = 0, lastPwmR = 0;    // last transmitted VEL pair
+bool    wheelsMoving = false;          // a VEL stream is active (explicit STOP not yet sent)
+unsigned long lastVelTx = 0;           // last VEL transmit (500 ms watchdog keepalive)
+#endif  // CANIS_MOBILE_ENABLED
+
 void setup() {
   Serial.begin(115200);
   delay(300);
@@ -208,8 +306,12 @@ void setup() {
 
   Serial2.begin(9600, SERIAL_8N1, ARD_RX_PIN, ARD_TX_PIN);
 
+#if CANIS_MOBILE_ENABLED
+  mobileSetup();          // [MOB] PCNT quadrature units + overflow ISR
+#endif
+
   Serial.println("\nCANIS core online (optimized). PIR warming up (~60s).");
-  Serial.println("Keys:  t=trigger  r=reset  d=dispense  m=arm exposure  y=confirm exposure  f=test fwd  s=stop  c=self-test");
+  Serial.println("Keys:  t=trigger  r=reset  d=dispense  m=arm exposure  y=confirm exposure  f=test fwd  s=stop  c=self-test  g=GUARD  p=PLAY  b=PLACE");
 #if CANIS_OBSERVE_ONLY
   Serial.println("*** OBSERVE-ONLY BUILD [B5]: sensing + reporting only — NO treat/buzzer/motion ***");
 #endif
@@ -237,6 +339,15 @@ void loop() {
   updateState();
   runStateBehavior(now);
   serviceMotion(now);
+#if CANIS_MOBILE_ENABLED
+  pollMotion(now);        // [MOB] GET /motion @ 10 Hz -> clamped (v, omega) target
+  mobileControl(now);     // [MOB] 20 Hz odometry + fail-safe stack + wheel PI -> VEL/STOP
+  streamTelemetry(now);   // [MOB] POST /telemetry @ 10 Hz (OPT-10-exempt, freshest-only)
+#endif
+#if CANIS_ROAM_ENABLED
+  serviceRoam(now);       // [ROAM/PLAY] wander + reward-chase + flee while in PLAY mode
+#endif
+  servicePlace(now);      // [PLACE] reward Shifu for settling on his mat
 #if CANIS_USE_DISPENSE_ACK
   serviceAck(now);        // [OPT-7] count rewards only on confirmed delivery
 #endif
@@ -340,6 +451,20 @@ void handleInput() {
       // [C7] Guided commissioning self-test. Replaces the 7-step manual bench doc
       // (hardware/TESTING.md) with one re-runnable, serial-driven routine.
       runSelfTest();
+    } else if (c == 'g') {
+      robotMode = CANIS_MODE_GUARD;
+      stopMotion(millis());
+      patrolMode = false;
+      Serial.println("  [MODE] GUARD — stationary sentry (buzzer correct + reward on leave)");
+    } else if (c == 'p') {
+      robotMode = CANIS_MODE_PLAY;
+      Serial.println("  [MODE] PLAY — roam + reward-chase + flee (never toward the dog)");
+    } else if (c == 'b') {
+      robotMode  = CANIS_MODE_PLACE;
+      stopMotion(millis());
+      patrolMode = false;
+      placeSince = 0;
+      Serial.println("  [MODE] PLACE — point me at his bed; I treat him for settling there");
     }
   }
 }
@@ -526,7 +651,16 @@ const char* localBearing() {
 // bounds the per-tick change to (RISE-DECAY)*DT_MAX.
 void updateArousal(float dt) {
   if (dt > CANIS_DT_MAX_S) dt = CANIS_DT_MAX_S;
+#if CANIS_ROAM_ENABLED
+  // [ROAM] While patrolling, ONLY the camera marker counts as "the dog".
+  // Ultrasonics (walls) and PIR (the robot's own motion) would otherwise raise
+  // arousal at every obstacle and fire phantom corrections. Once engaged (and
+  // therefore stationary again) the full sensor set is meaningful, so restore it.
+  detectionActive = patrolMode ? visionActive
+                               : (pir.state || zoneActive || visionActive);
+#else
   detectionActive = pir.state || zoneActive || visionActive;
+#endif
   if (detectionActive) arousal += CANIS_AROUSAL_RISE_PER_SEC * dt;
   arousal -= CANIS_DECAY_PER_SEC * dt;
   if (arousal > CANIS_AROUSAL_MAX) arousal = CANIS_AROUSAL_MAX;
@@ -569,8 +703,13 @@ void updateState() {
     if (prevState == CORRECTION && state != CORRECTION) stopMotion(millis());
 
     if (state == CALM && (prevState == AROUSAL || prevState == CORRECTION)) {
-      reward("settled / left zone");
-      lastCalmReward = millis();
+      // Reward LEAVING only when GUARDing a spot. In PLACE we must NOT reward him
+      // for leaving his mat (that's the opposite of the goal); PLAY does its own.
+      if (robotMode == CANIS_MODE_GUARD) {
+        reward("settled / left zone");
+        lastCalmReward = millis();
+      }
+      lastEngageEnd = millis();   // [ROAM] start the resume-delay before wandering again
     }
     if (state == CALM) calmSince = millis();
 
@@ -581,6 +720,10 @@ void updateState() {
 void runStateBehavior(unsigned long now) {
   switch (state) {
     case CALM:
+      // Sustained-calm treats belong to GUARD mode (reward the dog for being calm
+      // in the guarded area). PLAY rewards chasing, PLACE rewards settling — each
+      // does its own, so don't dump calm treats into an empty room here.
+      if (robotMode != CANIS_MODE_GUARD) break;
       if (now - bootTime >= CANIS_WARMUP_MS &&
           now - calmSince >= CANIS_CALM_REWARD_MS && now - lastCalmReward >= CANIS_CALM_REWARD_MS) {
         reward("sustained calm");
@@ -590,6 +733,9 @@ void runStateBehavior(unsigned long now) {
     case AROUSAL:
       break;
     case CORRECTION:
+      // Only GUARD mode scolds. PLAY handles the dog via serviceRoam (treat +
+      // flee) and PLACE rewards him for being there — neither buzzes at him.
+      if (robotMode != CANIS_MODE_GUARD) break;
       if (now - lastCorrectionAction >= CANIS_CORRECTION_ACTION_MS) {
         lastCorrectionAction = now;
 #if CANIS_OBSERVE_ONLY
@@ -599,18 +745,15 @@ void runStateBehavior(unsigned long now) {
 #else
         tone(BUZZER_PIN, CANIS_CORRECTION_TONE_FREQ, CANIS_CORRECTION_TONE_MS);
         Serial.print("  [OUTPUT] correction cue (buzzer)");
+#if CANIS_NEVER_APPROACH
+        // HARD INVARIANT: never move toward the dog. Guard correction is the
+        // buzzer disengage cue only — the robot holds its ground (or, if you want
+        // it to retreat, that's the PLAY-mode flee). No orient/approach here.
+        Serial.print(" + (hold — never toward the dog)");
+#else
         if (EXPOSURE_LEVEL >= 1) {
           const char* dir = localBearing();
           if (!dir) dir = zoneToDir(visionZone);
-          // [OPT-8][SAFETY] Level-1 welfare invariant: "orient/pivot ONLY, NEVER
-          // approach." The bearing can legitimately be "FORWARD" — localBearing()
-          // returns it when the CENTRE ultrasonic is nearest, and zoneToDir()
-          // returns it as its default — which the Arduino executes as a straight
-          // forward drive AT the dog. A forward approach is only permitted at
-          // EXPOSURE_LEVEL >= 2 (enforced again in serviceMotion's phase-2 gate).
-          // Below that, rewrite a FORWARD bearing into a token in-place pivot (a
-          // short LEFT nudge) so we still reorient toward the zone without ever
-          // closing distance on the dog. Levels >= 2 are unchanged.
           if (EXPOSURE_LEVEL < 2 && strcmp(dir, "FORWARD") == 0) {
             dir = "LEFT";   // hold ground: pivot in place, do NOT approach
           }
@@ -620,6 +763,7 @@ void runStateBehavior(unsigned long now) {
         } else {
           Serial.print(" + (movement off, exposure 0)");
         }
+#endif  // CANIS_NEVER_APPROACH
         if (visionZone[0]) { Serial.print(" zone="); Serial.print(visionZone); }
         Serial.println();
 #endif  // !CANIS_OBSERVE_ONLY
@@ -630,15 +774,40 @@ void runStateBehavior(unsigned long now) {
 
 // ---------- Movement ----------
 void startMotion(const char* cmd, unsigned long durMs, unsigned long now) {
+#if CANIS_MOBILE_ENABLED
+  // [MOB] In mobile builds locomotion comes ONLY from the CBF pipeline
+  // (/motion -> clamps -> wheel PI -> VEL); the legacy open-loop words would
+  // fight the velocity loop on the same Serial2 link. Contract §4: the CBF
+  // pipeline "replac[es] the legacy open-loop roam word-commands as the
+  // source of locomotion." moveCmd stays empty, so the [OPT-10] HTTP deferral
+  // never engages from legacy motion either.
+  (void)durMs; (void)now;
+  Serial.print("  [MOB] legacy motion '"); Serial.print(cmd);
+  Serial.println("' suppressed (CANIS_MOBILE_ENABLED build)");
+#else
   strncpy(moveCmd, cmd, sizeof(moveCmd) - 1);
   moveCmd[sizeof(moveCmd) - 1] = '\0';
   moveUntil     = now + durMs;
   lastMovePulse = now;
   Serial2.println(moveCmd);
+#endif
 }
 
 void stopMotion(unsigned long now) {
   (void)now;
+#if CANIS_MOBILE_ENABLED
+  // [MOB] A LOCAL stop request (manual 's', state transitions, mode switches)
+  // also drops the CBF target: send the explicit STOP verb immediately and
+  // invalidate the last MOVE, so the wheel loop holds STOP until the Pi
+  // serves a FRESH command (<= 100 ms later if it genuinely wants motion).
+  cmdV = 0.0f;
+  cmdOmega = 0.0f;
+  lastMotionOkMs = 0;
+  if (wheelsMoving) {
+    Serial2.println("STOP");
+    wheelsMoving = false;
+  }
+#endif
   if (moveCmd[0]) Serial2.println("STOP");
   moveCmd[0]  = '\0';
   moveUntil   = 0;
@@ -649,10 +818,13 @@ void serviceMotion(unsigned long now) {
   if (!moveCmd[0]) return;
 
   if ((long)(now - moveUntil) >= 0) {
+#if !CANIS_NEVER_APPROACH
     if (motionPhase == 1 && EXPOSURE_LEVEL >= 2 && state == CORRECTION) {
-      startMotion("FORWARD", CANIS_APPROACH_MS, now);
+      startMotion("FORWARD", CANIS_APPROACH_MS, now);   // (disabled by CANIS_NEVER_APPROACH)
       motionPhase = 2;
-    } else {
+    } else
+#endif
+    {
       stopMotion(now);
     }
     return;
@@ -661,6 +833,427 @@ void serviceMotion(unsigned long now) {
   if (now - lastMovePulse >= CANIS_MOVE_PULSE_MS) {
     Serial2.println(moveCmd);
     lastMovePulse = now;
+  }
+}
+
+#if CANIS_MOBILE_ENABLED
+// ================= Mobile drivetrain / CBF safe motion [MOB] =================
+// Encoders (PCNT hardware) -> odometry -> fail-safe stack -> per-wheel
+// velocity PI -> "VEL <pwmL> <pwmR>" on the existing Serial2 grammar, plus
+// the /motion poll and /telemetry stream. The Uno stays the dumb, certifiable
+// executor: its 1000 ms MOTION_TIMEOUT_MS watchdog is UNCHANGED and remains
+// the supreme fail-safe underneath everything in this section.
+
+// One PCNT unit per wheel, BOTH channels used for full 4x quadrature decode:
+// channel 0 counts A edges with B as the direction line, channel 1 counts B
+// edges with A as the direction line (the standard PCNT rotary-encoder
+// configuration), so all four edges of a line pair count.
+//
+// SIGN CONVENTION (hardware assumption — verify at bring-up): channel A must
+// LEAD channel B when that wheel drives the robot FORWARD, giving POSITIVE
+// counts. If a side reads backwards on the bench, swap that side's A/B pins
+// (or their #defines in canis_config.h) — do NOT patch the sign in software
+// here, or the odometry and the Uno's PWM sign will disagree.
+void setupEncoder(int unitNum, int pinA, int pinB) {
+  pcnt_unit_t unit = (pcnt_unit_t)unitNum;
+
+  // Open-collector encoder outputs need these pulls; push-pull outputs ignore
+  // them. GPIO16-19 all have internal pulls — the WROVER remap to input-only
+  // 36/39 (see the pin-budget note in canis_config.h) does NOT: add external
+  // pull-ups there.
+  pinMode(pinA, INPUT_PULLUP);
+  pinMode(pinB, INPUT_PULLUP);
+
+  pcnt_config_t cfg = {};
+  cfg.unit          = unit;
+  cfg.counter_h_lim = ENC_H_LIM;     // hardware resets to 0 at the limit and
+  cfg.counter_l_lim = -ENC_H_LIM;    //   fires the event the ISR accumulates
+
+  cfg.channel        = PCNT_CHANNEL_0;    // A edges, B = direction
+  cfg.pulse_gpio_num = pinA;
+  cfg.ctrl_gpio_num  = pinB;
+  cfg.pos_mode       = PCNT_COUNT_INC;    // A rising ...
+  cfg.neg_mode       = PCNT_COUNT_DEC;    // A falling ...
+  cfg.lctrl_mode     = PCNT_MODE_KEEP;    // ... counted as-is while B is low
+  cfg.hctrl_mode     = PCNT_MODE_REVERSE; // ... reversed while B is high
+  pcnt_unit_config(&cfg);
+
+  cfg.channel        = PCNT_CHANNEL_1;    // B edges, A = direction (opposite sense)
+  cfg.pulse_gpio_num = pinB;
+  cfg.ctrl_gpio_num  = pinA;
+  cfg.pos_mode       = PCNT_COUNT_DEC;
+  cfg.neg_mode       = PCNT_COUNT_INC;
+  cfg.lctrl_mode     = PCNT_MODE_KEEP;
+  cfg.hctrl_mode     = PCNT_MODE_REVERSE;
+  pcnt_unit_config(&cfg);
+
+  // Glitch filter: 1023 APB cycles (~12.8 us @ 80 MHz) rejects contact/EMI
+  // spikes but passes real edges by a wide margin — the fastest legitimate
+  // edge at the 0.35 m/s cap is ~2.3 kHz per channel (~430 us apart).
+  pcnt_set_filter_value(unit, 1023);
+  pcnt_filter_enable(unit);
+
+  pcnt_event_enable(unit, PCNT_EVT_H_LIM);
+  pcnt_event_enable(unit, PCNT_EVT_L_LIM);
+  pcnt_counter_pause(unit);
+  pcnt_counter_clear(unit);
+  // resumed in mobileSetup() AFTER the ISR is attached, so no event is lost
+}
+
+// Limit-event ISR: the 16-bit hardware counter reset to 0 at +/-ENC_H_LIM;
+// fold that excursion into the 64-bit accumulator. Installed via the default
+// (non-IRAM-flag) PCNT ISR service, so calling driver code here is legal.
+static void IRAM_ATTR pcntLimitIsr(void* arg) {
+  int unitNum = (int)(intptr_t)arg;
+  uint32_t status = 0;
+  pcnt_get_event_status((pcnt_unit_t)unitNum, &status);
+  volatile int64_t* accum = (unitNum == (int)PCNT_UNIT_0) ? &encAccumL : &encAccumR;
+  portENTER_CRITICAL_ISR(&encMux);
+  if (status & PCNT_EVT_H_LIM) *accum += ENC_H_LIM;
+  if (status & PCNT_EVT_L_LIM) *accum -= ENC_H_LIM;
+  portEXIT_CRITICAL_ISR(&encMux);
+}
+
+// Wrap-safe cumulative signed count: 64-bit accumulator + live 16-bit hardware
+// count, read atomically against the limit ISR (a fold between the two reads
+// would otherwise show a transient +/-ENC_H_LIM glitch to the odometry).
+int64_t encoderCount(int unitNum, volatile int64_t* accum) {
+  int16_t hw = 0;
+  portENTER_CRITICAL(&encMux);
+  pcnt_get_counter_value((pcnt_unit_t)unitNum, &hw);
+  int64_t total = *accum + hw;
+  portEXIT_CRITICAL(&encMux);
+  return total;
+}
+
+void mobileSetup() {
+  setupEncoder(PCNT_UNIT_0, CANIS_ENC_L_A_PIN, CANIS_ENC_L_B_PIN);   // LEFT  -> unit 0
+  setupEncoder(PCNT_UNIT_1, CANIS_ENC_R_A_PIN, CANIS_ENC_R_B_PIN);   // RIGHT -> unit 1
+  pcnt_isr_service_install(0);   // default flags (not ESP_INTR_FLAG_IRAM)
+  pcnt_isr_handler_add(PCNT_UNIT_0, pcntLimitIsr, (void*)(intptr_t)PCNT_UNIT_0);
+  pcnt_isr_handler_add(PCNT_UNIT_1, pcntLimitIsr, (void*)(intptr_t)PCNT_UNIT_1);
+  pcnt_counter_resume(PCNT_UNIT_0);
+  pcnt_counter_resume(PCNT_UNIT_1);
+  Serial.println("[MOB] mobile drivetrain armed: PCNT units 0/1 (L/R encoders), "
+                 "/motion poll + /telemetry stream @10Hz, wheel PI @20Hz");
+}
+
+// VL53LX robot->dog range. The ToF driver lands on the RESERVED I2C pins
+// (21/22, see canis_config.h pin budget) at bring-up; until it does, this
+// returns the contract's ONLY no-data sentinel (-1.0, never a fake 0.0), and
+// the safety clamp below treats "no range" as AT-THE-BOUNDARY — contract §4:
+// no single sensor failure may produce a distance-reducing command. So a dog
+// in view with no range data can never be approached.
+float readTofM() {
+  return -1.0f;   // TODO(bring-up): VL53LX ranging over I2C (GPIO 21/22)
+}
+
+// ---------- Poll the Pi for the CBF motion command [MOB] ----------
+// GET /motion @ CANIS_ODOM_STREAM_HZ, mirroring /command's token-as-query
+// style (contract §2.1). Deliberately NOT gated on moveCmd: legacy word-motion
+// is suppressed in mobile builds (startMotion), and this poll IS the motion
+// path, so the [OPT-10] deferral cannot apply to it.
+void pollMotion(unsigned long now) {
+  if (mobileDown) return;                        // one-way degrade to stationary
+  if ((long)(now - postBackoffUntil) < 0) return;
+  if (now - lastMotionPollMs < 1000UL / CANIS_ODOM_STREAM_HZ) return;
+  lastMotionPollMs = now;
+  if (WiFi.status() != WL_CONNECTED) return;     // TTL in mobileControl STOPs for us
+
+  char url[96];
+  if (CANIS_TOKEN[0])
+    snprintf(url, sizeof(url), "http://%s:%d/motion?token=%s", PI_HOST, PI_PORT, CANIS_TOKEN);
+  else
+    snprintf(url, sizeof(url), "http://%s:%d/motion", PI_HOST, PI_PORT);
+
+  HTTPClient http;
+  http.begin(url);
+  http.setTimeout(CANIS_HTTP_TIMEOUT_MS);
+  int code = http.GET();
+  if (code == 200) {
+    String body = http.getString();
+    body.trim();
+    float v = 0.0f, w = 0.0f;
+    if (sscanf(body.c_str(), "MOVE %f %f", &v, &w) == 2) {
+      // Defense in depth (contract §2.2 rule 1): clamp firmware-side ALWAYS —
+      // never trust the Pi to have clamped, even though it serves post-QP u*.
+      if (v >  CANIS_MAX_LINEAR_MPS)  v =  CANIS_MAX_LINEAR_MPS;
+      if (v < -CANIS_MAX_LINEAR_MPS)  v = -CANIS_MAX_LINEAR_MPS;
+      if (w >  CANIS_MAX_ANGULAR_RPS) w =  CANIS_MAX_ANGULAR_RPS;
+      if (w < -CANIS_MAX_ANGULAR_RPS) w = -CANIS_MAX_ANGULAR_RPS;
+      cmdV = v; cmdOmega = w;
+      lastMotionOkMs = now;          // the CANIS_MOTION_CMD_TTL_MS window starts here
+    } else {
+      // "STOP" — and anything unparseable degrades to the exact same thing.
+      cmdV = 0.0f; cmdOmega = 0.0f;
+      lastMotionOkMs = 0;            // 0 = no live MOVE -> control loop holds STOP
+    }
+  } else if (code == 404 || code == 401 || code == 403) {
+    // Old dashboard (no /motion route) or a bad token: mobile is UNAVAILABLE
+    // (contract §1.2/§4). Latch stationary for the session — neither cause
+    // fixes itself without a redeploy/reflash, same rationale as postConfig's
+    // auth latch. Degradation is one-way toward stationary.
+    mobileDown = true;
+    cmdV = 0.0f; cmdOmega = 0.0f;
+    Serial.printf("  [MOB] /motion rejected (%d) — mobile UNAVAILABLE, latching stationary\n", code);
+  } else if (code <= 0) {
+    postBackoffUntil = now + CANIS_POST_BACKOFF_MS;   // Pi down -> shared backoff
+  }
+  http.end();
+}
+
+// One wheel's velocity PI + feedforward -> signed PWM in [-255, 255].
+// integ is kept in PWM units so the clamp is a direct authority limit.
+int wheelPi(float target, float meas, float& integ, float dt) {
+  float err = target - meas;
+  integ += MOB_KI * err * dt;
+  if (integ >  MOB_PI_INT_MAX) integ =  MOB_PI_INT_MAX;   // anti-windup
+  if (integ < -MOB_PI_INT_MAX) integ = -MOB_PI_INT_MAX;
+  float u = MOB_KFF * target + MOB_KP * err + integ;
+  if (u >  255.0f) u =  255.0f;
+  if (u < -255.0f) u = -255.0f;
+  return (int)lroundf(u);
+}
+
+// ---------- 20 Hz odometry + fail-safe stack + per-wheel velocity PI ----------
+// Order inside one tick: sample encoders -> integrate odometry -> stack EVERY
+// fail-safe onto the (v, omega) target -> differential map -> PI -> transmit
+// "VEL <pwmL> <pwmR>" (or the explicit "STOP" verb).
+void mobileControl(unsigned long now) {
+  if (now - lastControlMs < 1000UL / CANIS_CONTROL_RATE_HZ) return;
+  float dt = (now - lastControlMs) / 1000.0f;
+  lastControlMs = now;
+  if (dt > CANIS_DT_MAX_S) dt = CANIS_DT_MAX_S;   // same stall rationale as [OPT-4]
+
+  // --- odometry from encoder deltas ---
+  encL = encoderCount(PCNT_UNIT_0, &encAccumL);
+  encR = encoderCount(PCNT_UNIT_1, &encAccumR);
+  odomTsMs = now;                                  // contract: ts_ms = sample time
+  float dL = (float)(encL - prevEncL) * MOB_M_PER_COUNT;
+  float dR = (float)(encR - prevEncR) * MOB_M_PER_COUNT;
+  prevEncL = encL;  prevEncR = encR;
+  float measVL = dL / dt, measVR = dR / dt;        // per-wheel velocities, m/s
+  odomV     = (measVL + measVR) * 0.5f;            // + = forward (contract §1.1)
+  odomOmega = (measVR - measVL) / MOB_TRACK_M;     // + = CCW (right wheel faster)
+
+  // Heading: encoder-integrated yaw standing in for the IMU (which lands on
+  // the reserved I2C pins at bring-up). Contract §1.1 wants CLOCKWISE-positive
+  // degrees in [0, 360) from the boot reference; odomOmega is CCW-positive,
+  // hence the subtraction. NOTE: this drifts with wheel slip — the Pi's
+  // estimator must treat it as a relative, drifting reference.
+  headingDeg -= odomOmega * dt * (180.0f / PI);
+  headingDeg = fmodf(headingDeg, 360.0f);
+  if (headingDeg < 0.0f) headingDeg += 360.0f;
+
+  tofM = readTofM();
+
+  // --- fail-safe stack on the commanded (v, omega) ---
+  float v = cmdV, w = cmdOmega;
+  bool stopTarget = false;
+  if (mobileDown) stopTarget = true;               // no mobile routes Pi-side
+  if (lastMotionOkMs == 0 ||
+      now - lastMotionOkMs > CANIS_MOTION_CMD_TTL_MS)
+    stopTarget = true;                             // stale MOVE (>600 ms) -> STOP (§2.2 rule 3)
+  if (EXPOSURE_LEVEL < 1) stopTarget = true;       // exposure gate OUTRANKS the CBF (§4):
+                                                   //   level 0 = "no movement" stays law
+#if CANIS_OBSERVE_ONLY
+  stopTarget = true;                               // [B5] every actuator gated off
+#endif
+
+  // Never-approach floor (§2.2 rule 2): dog detected AND inside D_MIN — or
+  // range UNKNOWN, because a ToF dropout must never enable a distance-reducing
+  // command (§4) — clamps the forward component to <= 0. Pivoting in place
+  // and backing away remain legal; CANIS_NEVER_APPROACH stays supreme (the
+  // compile guard in canis_config.h enforces the pairing).
+  bool dogSeen = detectionActive || visionActive;
+  if (dogSeen && (tofM < 0.0f || tofM <= (float)CANIS_D_MIN_CM / 100.0f) && v > 0.0f)
+    v = 0.0f;
+
+  if (fabsf(v) < MOB_STOP_EPS && fabsf(w) < MOB_STOP_EPS) stopTarget = true;
+
+  if (stopTarget) {
+    // Stops are the EXPLICIT verb — NEVER "VEL 0 0" (contract §2.3) — so old
+    // and new Uno firmware behave identically on a stop. Sent once per stop;
+    // the Uno's own 1000 ms watchdog covers everything after that.
+    if (wheelsMoving) {
+      Serial2.println("STOP");
+      wheelsMoving = false;
+    }
+    piIntL = piIntR = 0.0f;            // no integrator windup while parked
+    lastPwmL = lastPwmR = 0;
+    return;
+  }
+
+  // --- differential map + per-wheel PI -> signed PWM ---
+  // v_L = v - omega*L/2, v_R = v + omega*L/2 (contract §2.2 rule 4; +omega =
+  // CCW means the RIGHT wheel runs faster on a left turn).
+  float vL = v - w * MOB_TRACK_M * 0.5f;
+  float vR = v + w * MOB_TRACK_M * 0.5f;
+  int pwmL = wheelPi(vL, measVL, piIntL, dt);
+  int pwmR = wheelPi(vR, measVR, piIntR, dt);
+
+  // PWM SIGN CONVENTION (contract §2.3): positive = that wheel FORWARD; the
+  // Uno maps sign -> IN1..IN4 direction pins and magnitude -> ENA/ENB duty,
+  // and does NO kinematics. Transmit on change at the control rate, and
+  // re-send an unchanged pair every CANIS_MOVE_PULSE_MS (500 ms) as the
+  // watchdog keepalive — exactly like the legacy motion words. Worst case
+  // ~14 chars * 20 Hz = 280 B/s, comfortably inside the 9600-baud link.
+  if (!wheelsMoving || pwmL != lastPwmL || pwmR != lastPwmR ||
+      now - lastVelTx >= CANIS_MOVE_PULSE_MS) {
+    Serial2.print("VEL ");
+    Serial2.print(pwmL);
+    Serial2.print(' ');
+    Serial2.println(pwmR);
+    lastVelTx = now;
+    lastPwmL  = pwmL;
+    lastPwmR  = pwmR;
+    wheelsMoving = true;
+  }
+}
+
+// ---------- Stream the motion frame to the Pi [MOB] ----------
+// POST /telemetry @ CANIS_ODOM_STREAM_HZ (contract §1.2). EXEMPT from the
+// [OPT-10] moveCmd deferral BY LAW — a moving robot is exactly when the Pi's
+// estimator needs data (and moveCmd is always empty in mobile builds anyway).
+// Freshest-only: a failed or missed frame is DROPPED, never queued; the next
+// tick sends the newest sample instead.
+void streamTelemetry(unsigned long now) {
+  if (mobileDown) return;
+  if ((long)(now - postBackoffUntil) < 0) return;
+  if (now - lastTelemetryMs < 1000UL / CANIS_ODOM_STREAM_HZ) return;
+  lastTelemetryMs = now;
+  if (WiFi.status() != WL_CONNECTED) return;
+  if (odomTsMs == 0) return;              // no odometry sample yet (first ticks)
+
+  char body[224];
+  snprintf(body, sizeof(body),
+    "{\"ts_ms\":%lu,\"enc_l\":%lld,\"enc_r\":%lld,"
+    "\"odom_v\":%.3f,\"odom_omega\":%.3f,\"tof_m\":%.3f,\"heading_deg\":%.1f}",
+    (unsigned long)odomTsMs, (long long)encL, (long long)encR,
+    odomV, odomOmega, tofM, headingDeg);
+
+  char url[64];
+  snprintf(url, sizeof(url), "http://%s:%d/telemetry", PI_HOST, PI_PORT);
+
+  HTTPClient http;
+  http.begin(url);
+  http.addHeader("Content-Type", "application/json");
+  if (CANIS_TOKEN[0]) http.addHeader("X-CANIS-Token", CANIS_TOKEN);  // [OPT-2] auth
+  http.setTimeout(CANIS_HTTP_TIMEOUT_MS);
+  int code = http.POST((uint8_t*)body, strlen(body));
+  if (code == 404 || code == 401 || code == 403) {
+    // Contract §1.2: 404/401 from /telemetry (old dashboard / bad token) means
+    // mobile is UNAVAILABLE — STOP and behave stationary for the session.
+    mobileDown = true;
+    cmdV = 0.0f; cmdOmega = 0.0f;
+    Serial.printf("  [MOB] /telemetry rejected (%d) — mobile UNAVAILABLE, latching stationary\n", code);
+  } else if (code <= 0) {
+    postBackoffUntil = now + CANIS_POST_BACKOFF_MS;   // dropped, not queued
+  }
+  http.end();
+}
+#endif  // CANIS_MOBILE_ENABLED
+
+#if CANIS_ROAM_ENABLED
+// Direction that moves AWAY from the dog — never toward him.
+// At flee time Shifu is by definition in the FORWARD camera (that's what
+// triggered PLAY), so "away" = backing/peeling off the front. Direction comes
+// from the CAMERA only — where his marker sits in the frame (needs detect.py
+// --directional for a left/right label; without it we just back straight off).
+// The ultrasonics are NOT trusted for his bearing — they can't tell him from a
+// wall; they only steer obstacle-avoidance while roaming.
+const char* fleeDir() {
+  const char* b = zoneToDir(visionZone);           // "LEFT" / "RIGHT" / "FORWARD"
+  if (strcmp(b, "LEFT")  == 0) return "RIGHT";      // front-left  -> peel away to the right
+  if (strcmp(b, "RIGHT") == 0) return "LEFT";       // front-right -> peel away to the left
+  return "BACKWARD";                                // front-centre / no side -> back straight off
+}
+
+// ---------- PLAY engine + reactive roam [ROAM] ----------
+// Runs LAST in the loop, after serviceMotion, so it only issues a new leg once
+// the previous one has finished (moveCmd cleared). Only active in PLAY mode;
+// GUARD mode is the stationary sentry and this halts any leftover motion.
+//
+// PLAY:
+//   * "Shifu is here" = his ArUco MARKER is in the forward camera's view
+//     (visionActive). Ultrasonics are NOT used to detect him — they can't tell
+//     a dog from a wall — they only steer the roam and pick the flee direction.
+//   * When his marker appears: drop a treat (reward() self-limits by cooldown +
+//     daily cap) and FLEE (retreat leg via fleeDir) so he chases. Never toward.
+//   * When no marker: wander, steering off obstacles (usCm, -1 = clear), so it
+//     goes looking for him. The Arduino's 1 s watchdog is the motion backstop.
+void serviceRoam(unsigned long now) {
+  if (robotMode != CANIS_MODE_PLAY) {          // GUARD mode: no roam/play
+    if (patrolMode) { stopMotion(now); patrolMode = false; }
+    return;
+  }
+
+  // --- Shifu engaged (marker in view) -> reward + flee ---
+  if (visionActive) {
+    if (patrolMode) { patrolMode = false; Serial.println("  [PLAY] Shifu spotted — treat + flee"); }
+    lastEngageEnd = now;                        // hold off roaming while he's around
+    if (!moveCmd[0]) {                          // one action per finished leg
+      if (lastRewardMs == 0 || now - lastRewardMs >= CANIS_REWARD_COOLDOWN_MS)
+        reward("play — Shifu engaged");         // treat him for chasing (cooldown/cap gated)
+      startMotion(fleeDir(), CANIS_PLAY_FLEE_MS, now);   // retreat: NEVER toward him
+      motionPhase = 0;
+    }
+    return;
+  }
+
+  // --- no dog in view -> wander, looking for him ---
+  bool wantPatrol = (now - bootTime      >= CANIS_WARMUP_MS)
+                    && (now - lastEngageEnd >= CANIS_ROAM_RESUME_MS);
+  if (!wantPatrol) {
+    if (patrolMode) { stopMotion(now); patrolMode = false; }
+    return;
+  }
+  if (!patrolMode) { patrolMode = true; Serial.println("  [PLAY] roaming — looking for Shifu"); }
+
+  if (moveCmd[0]) return;                       // current leg still running
+
+  float l = usCm[0], c = usCm[1], r = usCm[2];  // LEFT, CENTRE, RIGHT (-1 = clear)
+  bool cBlocked = (c > 0 && c <= CANIS_ROAM_CLEAR_CM);
+  bool lBlocked = (l > 0 && l <= CANIS_ROAM_CLEAR_CM);
+  bool rBlocked = (r > 0 && r <= CANIS_ROAM_CLEAR_CM);
+
+  if (!cBlocked && !lBlocked && !rBlocked) {
+    startMotion("FORWARD", CANIS_ROAM_FWD_MS, now);
+  } else {
+    float lroom = (l < 0) ? 1e9f : l;           // no echo == lots of room
+    float rroom = (r < 0) ? 1e9f : r;
+    startMotion(lroom >= rroom ? "LEFT" : "RIGHT", CANIS_ROAM_TURN_MS, now);
+  }
+  motionPhase = 0;
+}
+#endif  // CANIS_ROAM_ENABLED
+
+// ---------- PLACE / "good boy" mode ----------
+// Stationary: point the robot at Shifu's bed/mat. While his marker is in view
+// (he's on his spot) it periodically drops a treat -> rewards him for STAYING
+// there instead of getting into trouble (place-training — one of the most
+// effective things for a bored/destructive dog). No buzzer, no motion. He must
+// be there CANIS_PLACE_SETTLE_MS before the first treat (reward settling, not a
+// pass-through), then a treat every CANIS_PLACE_REWARD_MS while he stays. If he
+// leaves, the timer resets — he is never rewarded for leaving.
+void servicePlace(unsigned long now) {
+  if (robotMode != CANIS_MODE_PLACE) { placeSince = 0; return; }
+
+  if (!visionActive) {                 // not on the mat -> reset, no reward
+    if (placeSince) Serial.println("  [PLACE] Shifu left his spot");
+    placeSince = 0;
+    return;
+  }
+
+  if (placeSince == 0) {               // just arrived -> start the settle timer
+    placeSince = now;
+    Serial.println("  [PLACE] Shifu on his spot — settling...");
+  }
+  if (now - placeSince < CANIS_PLACE_SETTLE_MS) return;   // let him actually settle first
+
+  if (lastPlaceReward == 0 || now - lastPlaceReward >= CANIS_PLACE_REWARD_MS) {
+    reward("place — settled on his spot");   // treat for staying (cooldown/cap gated)
+    lastPlaceReward = now;
   }
 }
 
@@ -828,6 +1421,23 @@ void reportToPi(unsigned long now) {
   lastReport = now;
   if (WiFi.status() != WL_CONNECTED) return;
 
+#if CANIS_MOBILE_ENABLED
+  // [MOB] Contract §1.1: mobile builds APPEND the seven mobile fields (exact
+  // names) to the legacy 1 Hz report. Stationary builds take the #else branch
+  // and omit them entirely, keeping that wire shape byte-identical.
+  char body[384];
+  snprintf(body, sizeof(body),
+    "{\"state\":\"%s\",\"arousal\":%.1f,\"arousal_max\":%.1f,"
+    "\"intervention_count\":%d,\"reward_count\":%d,\"jam_count\":%d,"
+    "\"exposure_level\":%d,\"uptime_sec\":%lu,"
+    "\"mobile\":1,\"enc_l\":%lld,\"enc_r\":%lld,"
+    "\"odom_v\":%.3f,\"odom_omega\":%.3f,\"tof_m\":%.3f,\"heading_deg\":%.1f}",
+    name(state), arousal, CANIS_AROUSAL_MAX,
+    interventionCount, rewardCount, jamCount,
+    EXPOSURE_LEVEL, (unsigned long)(now / 1000),
+    (long long)encL, (long long)encR,
+    odomV, odomOmega, tofM, headingDeg);
+#else
   char body[256];
   snprintf(body, sizeof(body),
     "{\"state\":\"%s\",\"arousal\":%.1f,\"arousal_max\":%.1f,"
@@ -836,6 +1446,7 @@ void reportToPi(unsigned long now) {
     name(state), arousal, CANIS_AROUSAL_MAX,
     interventionCount, rewardCount, jamCount,
     EXPOSURE_LEVEL, (unsigned long)(now / 1000));
+#endif  // CANIS_MOBILE_ENABLED
 
   char url[64];
   snprintf(url, sizeof(url), "http://%s:%d/ingest", PI_HOST, PI_PORT);
@@ -868,7 +1479,13 @@ void postConfig(unsigned long now) {
   if ((long)(now - postBackoffUntil) < 0) return;
   if (WiFi.status() != WL_CONNECTED) return;
 
-  char body[512];
+  // [MOB] The nine contract §3.1 mobile keys are announced in BOTH builds, ON
+  // PURPOSE (the one deliberate exception to "mobile compiles away"): the live
+  // mobile_enabled value is exactly how the dashboard learns the drivetrain is
+  // OFF, per contract §4 ("announced live via /config"). All nine names match
+  // the dashboard's _CONFIG_NUM_KEYS whitelist (app.py); an older dashboard's
+  // sanitizer simply drops unknown keys, so this is backward-safe.
+  char body[768];
   snprintf(body, sizeof(body),
     "{\"fw\":\"CANIS_Core-opt\",\"observe_only\":%d,"
     "\"exposure_level\":%d,\"exposure_default\":%d,"
@@ -876,7 +1493,10 @@ void postConfig(unsigned long now) {
     "\"arousal_enter\":%d,\"arousal_exit\":%d,\"correction_enter\":%d,\"correction_exit\":%d,"
     "\"reward_cooldown_ms\":%lu,\"calm_reward_ms\":%lu,\"max_session_rewards\":%d,"
     "\"vision_ttl_ms\":%lu,\"jam_fault_threshold\":%d,"
-    "\"use_dispense_ack\":%d,\"ack_timeout_ms\":%lu}",
+    "\"use_dispense_ack\":%d,\"ack_timeout_ms\":%lu,"
+    "\"mobile_enabled\":%d,\"d_min_cm\":%d,\"d_max_cm\":%d,\"cbf_gamma\":%.2f,"
+    "\"control_hz\":%d,\"odom_hz\":%d,\"motion_cmd_ttl_ms\":%lu,"
+    "\"max_v_mps\":%.2f,\"max_w_rps\":%.2f}",
     (int)CANIS_OBSERVE_ONLY,
     EXPOSURE_LEVEL, (int)CANIS_EXPOSURE_DEFAULT,
     CANIS_AROUSAL_MAX, CANIS_DECAY_PER_SEC, CANIS_AROUSAL_RISE_PER_SEC, CANIS_DT_MAX_S,
@@ -885,7 +1505,10 @@ void postConfig(unsigned long now) {
     (unsigned long)CANIS_REWARD_COOLDOWN_MS, (unsigned long)CANIS_CALM_REWARD_MS,
     (int)CANIS_MAX_SESSION_REWARDS,
     (unsigned long)CANIS_VISION_TTL_MS, (int)CANIS_JAM_FAULT_THRESHOLD,
-    (int)CANIS_USE_DISPENSE_ACK, (unsigned long)CANIS_ACK_TIMEOUT_MS);
+    (int)CANIS_USE_DISPENSE_ACK, (unsigned long)CANIS_ACK_TIMEOUT_MS,
+    (int)CANIS_MOBILE_ENABLED, (int)CANIS_D_MIN_CM, (int)CANIS_D_MAX_CM, CANIS_CBF_GAMMA,
+    (int)CANIS_CONTROL_RATE_HZ, (int)CANIS_ODOM_STREAM_HZ, (unsigned long)CANIS_MOTION_CMD_TTL_MS,
+    CANIS_MAX_LINEAR_MPS, CANIS_MAX_ANGULAR_RPS);
 
   char url[64];
   snprintf(url, sizeof(url), "http://%s:%d/config", PI_HOST, PI_PORT);

@@ -56,6 +56,30 @@
             servo run on this Uno, and the Uno's persistence primitive is EEPROM
             (Preferences is ESP32-only). The ESP32 self-test drives them remotely.
 
+    [MOBILE] Differential-drive executor verb (docs/INTERFACE_CONTRACT.md).
+            NEW command on the existing 9600 link grammar:
+              "VEL <pwmL> <pwmR>\n"    pwm in [-255, 255], signed = direction
+            The ESP32 owns ALL the smarts (odometry, CBF/QP, wheel mapping
+            v_L = v - omega*L/2 / v_R = v + omega*L/2, per-wheel PI at
+            CANIS_CONTROL_RATE_HZ) and hands this Uno nothing but two final
+            signed PWM duties. This sketch stays a DUMB EXECUTOR on purpose:
+              - VEL drives both L298N channels through the SAME setMotor()
+                path as FORWARD/LEFT/etc, honoring the persisted [C7] invert
+                flags, and feeds the SAME MOTION_TIMEOUT_MS(1000) watchdog.
+                The watchdog is supreme: if VEL (or any motion verb) stops
+                arriving — ESP32 crash, WiFi loss, cut wire — motors stop
+                within ~1s with no ESP32 cooperation required. Unchanged.
+              - A malformed VEL (missing/garbled numbers) is IGNORED: it does
+                not touch the motors and does NOT feed the watchdog, so a
+                corrupted stream decays to STOP instead of acting on noise.
+              - Stops arrive as the explicit "STOP" verb (contract LAW: the
+                ESP32 never sends "VEL 0 0" to stop); if a "VEL 0 0" ever
+                does arrive it simply drives zero PWM — harmless.
+              - Nothing here EVER initiates motion: no command, no movement
+                (the [C7] MOTL/MOTR pulses are self-limiting bench verbs).
+            An OLD ESP32 that never sends VEL leaves this path dormant; the
+            word verbs above behave exactly as before.
+
   WIRING for ACK (the return line the original left unwired):
     Arduino pin 11 (SoftwareSerial TX) --> ESP32 GPIO 4 (RX2)
   This is a 5V TX into a 3.3V input, so it MUST pass through a level shifter or
@@ -143,7 +167,7 @@ SoftwareSerial link(LINK_RX, LINK_TX);
 
 int  lastButtonState = HIGH;
 int  dispenseCount   = 0;
-char cmdBuf[16];
+char cmdBuf[20];     // [MOBILE] sized for the longest verb "VEL -255 -255" (13 chars) + margin
 int  cmdLen = 0;
 
 bool          moving        = false;
@@ -168,7 +192,7 @@ void setup() {
   gate.attach(SERVO_PIN);
   gate.write(closedAngle());   // [C7] honor the persisted flap-zero trim
 
-  Serial.println("CANIS limbs ready (optimized). DISPENSE / FORWARD / BACKWARD / LEFT / RIGHT / STOP.");
+  Serial.println("CANIS limbs ready (optimized). DISPENSE / FORWARD / BACKWARD / LEFT / RIGHT / STOP / VEL <l> <r>.");
   Serial.println("Calib [C7]: MOTL/MOTR pulse a motor · INVL/INVR flip a motor · TRIM+/TRIM- flap zero · CAL? show");
   reportCalibration();
 }
@@ -236,7 +260,7 @@ void loop() {
     }
   }
 
-  static char monBuf[16];
+  static char monBuf[20];   // [MOBILE] match cmdBuf so a hand-typed VEL works from the Monitor
   static int  monLen = 0;
   while (Serial.available()) {
     char c = Serial.read();
@@ -266,6 +290,9 @@ void handleCommand(const char* cmd) {
   else if (strcmp(cmd, "LEFT")     == 0) drive(-PIVOT_SPEED,  PIVOT_SPEED, "LEFT");
   else if (strcmp(cmd, "RIGHT")    == 0) drive( PIVOT_SPEED, -PIVOT_SPEED, "RIGHT");
   else if (strcmp(cmd, "STOP")     == 0) stopMotors();
+  // [MOBILE] "VEL <pwmL> <pwmR>" — per-wheel signed PWM from the ESP32's CBF
+  // pipeline. Same executor path + same watchdog as the word verbs above.
+  else if (strncmp(cmd, "VEL", 3)  == 0 && cmd[3] == ' ') velCommand(cmd + 4);
   // [C7] Commissioning commands (word-style, like the movement verbs above). Sent
   // by the ESP32's 'c' self-test over the link, or typed on this Uno's Monitor.
   else if (strcmp(cmd, "MOTL")     == 0) pulseMotor(IN1, IN2, ENA, MOTOR_L_INVERT, "LEFT");
@@ -277,6 +304,48 @@ void handleCommand(const char* cmd) {
   else if (strcmp(cmd, "TRIM+")    == 0) nudgeTrim( TRIM_STEP_DEG);
   else if (strcmp(cmd, "TRIM-")    == 0) nudgeTrim(-TRIM_STEP_DEG);
   else if (strcmp(cmd, "CAL?")     == 0) reportCalibration();
+}
+
+// [MOBILE] Parse and execute "VEL <pwmL> <pwmR>". args points past "VEL ".
+// ASSUMPTIONS (docs/INTERFACE_CONTRACT.md):
+//   - pwmL/pwmR are final per-wheel duties in [-255,255]; ALL kinematics,
+//     odometry-based PI correction, and CBF safety clamping already happened
+//     on the ESP32 at CANIS_CONTROL_RATE_HZ. This Uno adds NO control law.
+//   - The ESP32 re-sends within CANIS_MOVE_PULSE_MS(500ms) while moving, so
+//     feeding lastMoveCmdMs here keeps the unchanged MOTION_TIMEOUT_MS(1000)
+//     watchdog satisfied; a silent link -> auto-STOP within ~1s (supreme).
+//   - Stops come as the explicit "STOP" verb, never "VEL 0 0".
+// A malformed line (either number missing) is ignored WITHOUT feeding the
+// watchdog — noise on the link decays to STOP rather than becoming motion.
+// Out-of-range values are clamped, not rejected: by the time a value reaches
+// the wire it was already clamped upstream, so a stray digit should saturate
+// safely instead of stranding the robot mid-leg with a stale command.
+void velCommand(const char* args) {
+  char* end;
+  long l = strtol(args, &end, 10);
+  if (end == args) { Serial.println("[vel] malformed (L) -> ignored"); return; }
+  const char* rest = end;
+  long r = strtol(rest, &end, 10);
+  if (end == rest) { Serial.println("[vel] malformed (R) -> ignored"); return; }
+  l = constrain(l, -255, 255);
+  r = constrain(r, -255, 255);
+
+  // [C7] invert flags apply here exactly as in drive(): a wrong-way wheel is
+  // still a one-time INVL/INVR fix, not a wiring change.
+  setMotor(IN1, IN2, ENA, (int)l, MOTOR_L_INVERT);
+  setMotor(IN3, IN4, ENB, (int)r, MOTOR_R_INVERT);
+  moving = true;
+  lastMoveCmdMs = millis();
+
+  // Print only on CHANGE: at the ESP32's control rate a per-command print
+  // would eat milliseconds per line at 9600 and skew the executor timing.
+  static long lastL = 0, lastR = 0;
+  static bool everPrinted = false;
+  if (!everPrinted || l != lastL || r != lastR) {
+    everPrinted = true; lastL = l; lastR = r;
+    Serial.print("[vel] L="); Serial.print(l);
+    Serial.print(" R=");      Serial.println(r);
+  }
 }
 
 void drive(int left, int right, const char* label) {

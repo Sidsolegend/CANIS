@@ -2,6 +2,12 @@
 """
 CANIS — vision detection (Pi)  [OPTIMIZED DUPLICATE]
 ====================================================
+*** LEGACY: detect_yolo.py is now the DEFAULT vision pipeline. ***
+This ArUco pipeline is kept in place as a fallback reporter (its bare
+{"zone": ...} POST remains a valid /detect body forever per
+docs/INTERFACE_CONTRACT.md §3) and because detect_yolo.py imports the camera
+sources, blur gate, and frame-signature helpers defined here.
+
 Same job as the original vision/detect.py: detect Shifu's ArUco collar marker
 and POST this camera's zone to the dashboard's /detect endpoint. Three
 review-identified fixes:
