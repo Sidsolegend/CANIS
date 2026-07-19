@@ -4,14 +4,14 @@
 
 **A welfare-first conditioning robot for a fearful dog.**
 CANIS rewards my Goldendoodle, Shifu, for *leaving* forbidden zones — it never
-punishes him for entering them. Raspberry Pi 5 vision (ArUco) + ESP32 arousal
+punishes him for entering them. Raspberry Pi 5 vision (YOLO) + ESP32 arousal
 state machine + Arduino real-time executor, wrapped in fail-safes designed
 around one hard constraint: **Shifu is afraid of moving objects**, so robot
 motion is a rationed hazard introduced over weeks, not a free actuator.
 
-> Proposed drop-in replacement for the root `README.md`. Links assume it sits
-> at the repo root; the `optimized/` tree holds the hardened sources and the
-> full documentation set.
+> **Working on this repo?** Start at [`optimized/RESUME_HERE.md`](optimized/RESUME_HERE.md)
+> — current state, next actions, and what not to read. The `optimized/` tree
+> holds the real sources; root-level firmware/vision folders are stale duplicates.
 
 ---
 
@@ -38,7 +38,7 @@ CANIS inverts it:
 
 ```
  Pi 5 (eyes+face)          ESP32 (brain)                Arduino Uno (limbs)
- ArUco vision ─┐      ┌─ PIR + 3× ultrasonic       ┌─ motion watchdog (1 s)
+ YOLO vision  ─┐      ┌─ PIR + 3× ultrasonic       ┌─ motion watchdog (1 s)
  Flask dash ───┼─WiFi─┤  arousal integrator   UART ┤  L298N + motors
  event log ────┘      └─ CALM/AROUSAL/CORRECTION ──┘  servo gate + marker
                           EXPOSURE gate               beam-break jam sensor
@@ -50,7 +50,7 @@ within ~1 s of command silence** — so a crashed brain, a loose wire, or a WiFi
 storm all converge on a *stopped* robot. The ESP32 runs a rate-driven arousal
 integrator (+30/s during confirmed detection, −12/s decay) through a
 hysteresis state machine; dropping back to CALM is what earns the treat. The
-Pi does what MCUs can't: ArUco marker vision, the live dashboard, and the
+Pi does what MCUs can't: YOLO dog detection, the live dashboard, and the
 append-only study log.
 
 Full diagrams (system, state machine, dispense sequence, data flow):
@@ -81,13 +81,13 @@ Treat_Dispenser_CANIS/   Arduino executor: dispenser + motors (original)
 State_Machine_*/         reference sketches (offline / WiFi state machine)
 Sensors_Test/  WiFi_*/   bring-up & diagnostic sketches
 dashboard/               Flask dashboard (original)
-vision/                  ArUco detection + Pi camera setup (original)
+vision/                  stale duplicate — see optimized/vision/ (YOLO)
 hardware/                WIRING.md · TESTING.md · OpenSCAD CAD + STLs
 paper/                   systems-paper draft (honest n=1 framing)
 optimized/               ★ hardened duplicates + full docs — start here
 ├── canis_config.h / dashboard/canis_config.py   single-source tunables (+ parity test)
 ├── CANIS_Core/ · Treat_Dispenser_CANIS/ · vision/ · dashboard/   [OPT-1..14]
-├── tests/               51 pure-logic tests (pytest, no hardware needed)
+├── tests/               88 pure-logic tests (pytest, no hardware needed)
 ├── study/               STUDY_PROTOCOL.md · analyze_sessions.py
 ├── docs/                ARCHITECTURE.md · SAFETY.md
 ├── reviews/             engineering/admissions reviews · roadmap · risks
@@ -127,11 +127,12 @@ Bring-up order & pass criteria: [`hardware/TESTING.md`](hardware/TESTING.md);
 pinout & power: [`hardware/WIRING.md`](hardware/WIRING.md).
 
 **Vision (Pi):** [`vision/SETUP.md`](vision/SETUP.md), then
-`python3 optimized/vision/detect.py --zone kitchen`.
+`python3 optimized/vision/detect_yolo.py --zone kitchen` (ArUco `detect.py` is
+kept only as a fallback).
 
 **Tests (any machine, no hardware):**
 ```bash
-python3 -m pytest optimized/tests/    # 51 tests: state machine, safety
+python3 -m pytest optimized/tests/    # 88 tests: state machine, safety
                                       # invariants, config parity, event log
 ```
 
@@ -141,14 +142,22 @@ python3 optimized/study/analyze_sessions.py --generate-example ex.jsonl   # SYNT
 # real data: download /export/sessions.csv from the dashboard
 ```
 
-## Status (as of 2026-07-03)
+## Status (as of 2026-07-19)
 
-All subsystems hardware-tested individually (drive, dispenser, sensors,
-end-to-end vision, live dashboard); full-loop integration with the printed
-shell and the final power rail is the remaining build work — tracked in
-[`optimized/reviews/ROADMAP.md`](optimized/reviews/ROADMAP.md). The behavioral study has
-**not** started; its pre-registered protocol is written and the logging
-pipeline is tested.
+The **full stationary loop has been proven end-to-end** (camera -> YOLO ->
+dashboard -> ESP32 -> treat drops, 2026-07-13). Software is complete and the
+88-test suite passes on both the Mac and the Pi. Remaining build work is
+finishing the sensor wiring on the metal chassis; the printed shell was
+abandoned in favour of the existing Meccano chassis. Mobility (encoder motors +
+the CBF safe-motion controller) is written but flag-gated off until baseline
+data exists.
+
+The behavioral study has **not** started. Its protocol is written but is **not
+yet committed**, so it is not pre-registered — that commit has to land, dated,
+before the first real session for the n=1 design to mean anything.
+
+Working state, next actions, and gotchas:
+[`optimized/RESUME_HERE.md`](optimized/RESUME_HERE.md).
 
 ## Honesty & ethics
 
