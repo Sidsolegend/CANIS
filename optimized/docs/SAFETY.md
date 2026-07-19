@@ -138,9 +138,93 @@ test failure modes with the dog in the room.
 
 ---
 
-## Layer 3 — Reward-system fail-safes
+## Layer 3 — Distance barrier (CBF certificate) — MOBILE ONLY
 
-### 3.1 Cooldown + session cap
+**Scope:** everything in this layer is *inert in the shipped configuration.* It
+arms only when `CANIS_MOBILE_ENABLED = 1` (SAFE DEFAULT `0`, `canis_config.h`);
+in the stationary build the Pi controller emits no drive command and this layer
+has nothing to gate. It **ADDS** to the stack — it removes nothing above it, and
+it is compile-guarded to require `CANIS_NEVER_APPROACH = 1` (a `#error` fails the
+mobile build otherwise), so it can only ever add conservatism.
+
+The discrete never-approach rule (§0.3, `[OPT-8]`) forbids *forward motion below
+exposure 2*. This layer generalizes it into a continuous, measured guarantee: the
+robot→dog distance `d_rd` can never drop below the dog's adaptive comfort margin
+`D_comfort(s) ∈ [D_MIN, D_MAX]` (`CANIS_D_MIN_CM`=60, `CANIS_D_MAX_CM`=200) for
+**any** commanded input. Math + rationale: `docs/SAFE_MOTION_CBF_SPEC.md`; wire
+formats: `docs/INTERFACE_CONTRACT.md`; controller: `optimized/control/`.
+
+### 3.1 CBF safety-filter clamp (the certificate)
+- **Trigger:** every control tick (≥ 10 Hz, `CANIS_ODOM_STREAM_HZ`) while mobile.
+  The Pi estimator fuses encoder+IMU odometry with the VL53LX ToF range — **gated
+  by the YOLO bearing so it ranges the DOG, not a wall** — into `d_rd`, `β`; the
+  barrier QP filters the nominal command `u_nom = [v, ω]`.
+- **Response:** the closed-form QP projects `u_nom` onto the half-space
+  `v·cosβ ≤ γ·h`, `h = d_rd − D_comfort(s)`, `γ = CANIS_CBF_GAMMA` (0.5). At or
+  inside the boundary (`h ≤ 0`) only distance-holding/opening commands survive —
+  the forward component clamps to `v ≤ 0`. Heading/pivot (ω) is *not*
+  distance-reducing and passes untouched (*facing ≠ approaching*). Independently,
+  a firmware clamp (INTERFACE_CONTRACT §2.2) forces `v ≤ 0` whenever the dog is
+  detected and `tof_m ≤ D_MIN`, so the guarantee never rests on the Pi alone.
+- **Invariant (state + test):** **no single sensor or compute failure can produce
+  a distance-reducing command.** Asserted three independent ways by
+  `control/motion_controller.py --selftest`: a 5000-sample QP fuzz proving
+  `h ≤ 0 ⇒ v*·cosβ ≤ 0`; a closed-loop sim where a relentless `v = +0.3` nominal
+  settles at the boundary with zero distance-reducing commands (min
+  `h_true = +0.027 m`); and dropout scenarios (detection loss → `v ≤ 0` after the
+  hold; telemetry loss → STOP).
+- **Bench test (wheels off the ground, no dog in the room):**
+  1. **Spoof ToF below comfort:** inject a `tof_m` below `D_MIN` (60 cm) with a
+     dog bearing present and command a full-forward nominal. *Pass:* the served
+     `MOVE` line has `v ≤ 0` (forward clamped), and the firmware clamp holds even
+     if the Pi's QP output is bypassed.
+  2. **Pull the ToF:** disconnect it / force the `-1.0` sentinel. *Pass:* `d_rd`
+     goes unknown ⇒ `h` is evaluated at the boundary (worst-case β) ⇒ no
+     distance-reducing motion — i.e. it **falls back to the exposure gate**,
+     exactly as if below exposure 2.
+
+### 3.2 Uncertainty shrinks the margin, never grows it
+- **Trigger:** every barrier evaluation.
+- **Response:** the barrier is evaluated on `d_rd − min(σ, 30 cm)` (σ = estimator
+  std-dev), so a *less* certain estimate makes `h` **smaller** (more
+  conservative), never larger. Ahead of the QP: stale telemetry → STOP; exposure
+  0 → STOP; exposure 1 → nominal forward forced to 0 before the QP even runs.
+
+### 3.3 Degradation is one-way toward stationary
+- **Trigger:** loss of any barrier input (ToF, vision bearing, odometry) or of the
+  command/telemetry channel.
+- **Response:** the mobile stack can only ever fall **back** onto the pre-existing
+  stack — exposure gate (§0.2), never-approach (§0.3), the Uno 1 s watchdog
+  (§1.1), power-cycle→exposure-0 (§1.5). The CBF never overrides a stop.
+- **Test:** kill the `/detect` stream mid-run → after the 1.5 s grace, commanded
+  `v ≤ 0`; kill `/telemetry` or `/motion` → the ESP32 STOPs within
+  `CANIS_MOTION_CMD_TTL_MS` (600 ms), the Uno watchdog backstops at 1 s.
+
+### 3.4 Camera-architecture failure modes (A / B / C)
+The barrier's **safety** signal is always the ONBOARD ToF; the camera only
+supplies dog IDENTITY/bearing (which ToF return is "the dog"). This split is
+deliberate so the perception choice can never weaken the certificate — it
+resolves `SAFE_MOTION_CBF_SPEC.md` §9 open decision #1: identity sensor = **YOLO**
+(`detect_yolo.py`), the barrier keys off **ToF distance**, so the two are
+independent. Camera architecture is one switch, `CANIS_CAMERA_MODE`:
+
+| Mode | Camera path | New failure mode | Fail-safe |
+|---|---|---|---|
+| **A** `onboard` | camera on the Pi (CSI/USB) | camera read fail / frozen frame | `[OPT-6b]`/`[OPT-13]` reopen; vision goes silent → grace → no distance-reducing motion |
+| **B** `esp32cam_stream` | ESP32-CAM MJPEG → off-board Pi over **WiFi** | stream drop / stall / brownout / latency | a stalled stream is treated as a failed camera read (reconnect); **safety stays on the onboard ToF**, only identity/bearing rides the stream; if the motion command then goes stale → **STOP** (motion-cmd TTL watchdog) |
+| **C** `fixed_room` | fixed room camera → off-board Pi; a DICT_4X4_50 marker (`CANIS_ROBOT_MARKER_ID`=17) localizes the robot, YOLO finds the dog | **WiFi** stream drop; robot roams out of the fixed camera's view (marker lost) | marker lost → robot pose unknown → `distance_m` null → barrier evaluated at the boundary → no distance-reducing motion; stale motion cmd → **STOP** |
+
+In modes B and C the Pi is off-board, so the drive command itself rides **WiFi** —
+a new dependency the stationary/onboard build does not have. A dropped link is
+caught fastest-first by the watchdog chain (INTERFACE_CONTRACT §2.3): Pi serves
+`STOP` > ESP32 STOPs at 600 ms > Uno cuts PWM at 1 s. **Modes B and C add a
+WiFi/stream failure mode; its fail-safe is STOP.**
+
+---
+
+## Layer 4 — Reward-system fail-safes
+
+### 4.1 Cooldown + session cap
 - **Trigger:** any reward request < 20 s after the last, or beyond 30/session.
 - **Response:** held (logged). Bouncing at a zone edge can't rapid-fire treats;
   the hopper can't empty; the dog can't be overfed by a bug.
@@ -148,7 +232,7 @@ test failure modes with the dog in the room.
   `test_reward_session_cap`); config guard: `CALM_REWARD_MS >=
   REWARD_COOLDOWN_MS` fails the **build** if violated (`canis_config.h #error`).
 
-### 3.2 Motors stop before every dispense
+### 4.2 Motors stop before every dispense
 - **Trigger:** any DISPENSE.
 - **Response:** `stopMotors()` first — rewards are delivered by a stationary
   robot (welfare) and Timer2 is freed for the marker tone (Uno tone/PWM
@@ -156,7 +240,7 @@ test failure modes with the dog in the room.
 - **Test:** send `FORWARD` then immediately `DISPENSE` on the Uno monitor:
   wheels stop before the beep.
 
-### 3.3 Delivery verification: ACK `[OPT-7]` + jam detection `[OPT-11]`
+### 4.3 Delivery verification: ACK `[OPT-7]` + jam detection `[OPT-11]`
 - **Trigger:** gate cycled but no beam-break within 600 ms (jam / empty hopper /
   wedged treat).
 - **Response:** one retry with a longer gate hold; then `JAM` reply — the treat
@@ -168,7 +252,7 @@ test failure modes with the dog in the room.
   run a dispense with an empty hopper — expect retry, `JAM`, fault after the
   second, and no further marker beeps until `d`.
 
-### 3.4 ACK timeout
+### 4.4 ACK timeout
 - **Trigger:** no ACK/JAM within 2.5 s of a DISPENSE (return wire fault).
 - **Response:** treat not counted; slot freed; logged. Counts stay honest.
 - **Test:** disconnect the pin-11 return line and trigger a reward: expect the
@@ -176,41 +260,41 @@ test failure modes with the dog in the room.
 
 ---
 
-## Layer 4 — Network & data fail-safes
+## Layer 5 — Network & data fail-safes
 
-- **4.1 Dead-Pi back-off:** failed POST/poll pauses HTTP 5 s (rollover-safe
+- **5.1 Dead-Pi back-off:** failed POST/poll pauses HTTP 5 s (rollover-safe
   comparison), keeping the 20 ms control loop snappy with the Pi down.
   *Test:* kill the dashboard; loop logs keep 1 Hz cadence.
-- **4.2 WiFi reconnect watchdog `[OPT-5]`:** non-blocking `WiFi.reconnect()`
+- **5.2 WiFi reconnect watchdog `[OPT-5]`:** non-blocking `WiFi.reconnect()`
   every 5 s when down; robot is fully functional offline (sensors, FSM,
   dispenser all local). *Test:* toggle the AP; link self-heals, no loop stall.
-- **4.3 Dashboard auth + validation `[OPT-2]`:** LAN attacker without the token
+- **5.3 Dashboard auth + validation `[OPT-2]`:** LAN attacker without the token
   cannot inject `/detect` (steer the robot) or fake `/ingest`; all numerics
   bounded/NaN-safe. *Test:* `curl` without token → 401.
-- **4.4 Simulator honesty:** with the ESP32 silent > 5 s the UI switches to
+- **5.4 Simulator honesty:** with the ESP32 silent > 5 s the UI switches to
   demo data and **says so** in the footer — stale data is never presented as
   live. *Test:* unplug ESP32; footer flips to "demo data — simulator".
-- **4.5 Event-log durability `[OPT-14]`:** append-per-write JSONL; reader
+- **5.5 Event-log durability `[OPT-14]`:** append-per-write JSONL; reader
   tolerates a torn last line (power cut). *Test:* unit
   (`test_read_events_survives_truncated_last_line`).
 
 ---
 
-## Layer 5 — Electrical (see `hardware/WIRING.md`)
+## Layer 6 — Electrical (see `hardware/WIRING.md`)
 
-- **5.1 Separate motor power:** L298N motor rail from its own pack, never a
+- **6.1 Separate motor power:** L298N motor rail from its own pack, never a
   logic regulator; grounds common on the robot side. *Test:* TESTING.md Test 6.
-- **5.2 5 V→3.3 V protection:** every ultrasonic ECHO through 1 kΩ (review
+- **6.2 5 V→3.3 V protection:** every ultrasonic ECHO through 1 kΩ (review
   recommends upgrading GPIO 34/35 to 1 k/2 k dividers —
   `ENGINEERING_REVIEW.md` §7.1); ACK return line **must** be divided/shifted.
-- **5.3 Buck dial-in rule:** LM2596 set to 5.0–5.1 V with a meter **before**
+- **6.3 Buck dial-in rule:** LM2596 set to 5.0–5.1 V with a meter **before**
   anything connects to its output (an unset buck can sit > 10 V).
-- **5.4 Brownout-under-stall test (NEW — run before untethered sessions):**
+- **6.4 Brownout-under-stall test (NEW — run before untethered sessions):**
   wheels on carpet, command FORWARD and physically hold the chassis (motor
   stall ≈ worst-case current) for 3 s. Pass: neither MCU resets (watch both
   serial banners), buck output stays ≥ 4.8 V. Fail ⇒ move to the 6×AA/2S plan
   before any session with the dog (`ENGINEERING_REVIEW.md` §7.2).
-- **5.5 Motor noise caps:** 0.1 µF across each motor's terminals — verify
+- **6.5 Motor noise caps:** 0.1 µF across each motor's terminals — verify
   installed before untethered runs (brush noise can reset MCUs = uncontrolled
   behavior near the dog).
 

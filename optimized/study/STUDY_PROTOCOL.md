@@ -30,9 +30,13 @@ applied behavior analysis. It **cannot** support any generalization to other
 dogs, and no such claim will be made. It is also **not** veterinary advice;
 if Shifu's behavior includes anything medically concerning, a vet comes first.
 
-**Welfare precedence rule:** RQ1 outranks RQ2, and Shifu's welfare outranks
-both. Any conflict between "getting data" and "the dog is uncomfortable" is
-resolved for the dog, immediately, every time (§8).
+**Welfare precedence rule:** RQ1 outranks RQ2; the pre-registered
+controller-validation metrics (§5.4) are a *separate ledger* that outranks
+neither behavioral RQ; and **Shifu's welfare outranks all of them**. Any
+conflict between "getting data" (behavioral *or* controller) and "the dog is
+uncomfortable" is resolved for the dog, immediately, every time (§8). A
+controller-validation run is abandoned the instant a welfare rule fires,
+exactly as a behavioral session is.
 
 ## 2. Design
 
@@ -109,11 +113,14 @@ in the room" is burned off before treatment ever starts), contingency disabled:
   is the cleaner future version — see ROADMAP.)
 - Collect the same metrics as treatment sessions (§5). This is the yardstick
   every treatment claim is measured against.
-- Also during this week: verify vision coverage (marker detection range across
-  the room), sensor false-positive rate overnight (empty room — any
-  `zone_seen`/detection events with no dog present are a calibration problem to
-  fix **before** treatment), and camera low-light behavior (blur-guard skip
-  rate; ENGINEERING_REVIEW §4.5).
+- Also during this week: verify vision coverage (**dog-detection range** across
+  the room — note that perception has moved from ArUco markers to a **YOLO
+  learned detector** (spec §9.1 decision), so this check is now the detector's
+  recall/range on the *dog itself*, not marker legibility), sensor
+  false-positive rate overnight (empty room — any `zone_seen`/detection events
+  with no dog present, including **YOLO false-positive detections**, are a
+  calibration problem to fix **before** treatment), and camera low-light
+  behavior (blur-guard skip rate; ENGINEERING_REVIEW §4.5).
 
 ## 5. Measures
 
@@ -164,6 +171,34 @@ definitions above are behavioral and binary-ish on purpose; scores 3–4 are
 hard to misread; and the *automatic* metrics (latency, time-in-zone, treat
 acceptance from dispensed counts) cannot be wishful-thinking'd.
 
+### 5.4 Controller-validation metrics (pre-registered; `docs/SAFE_MOTION_CBF_SPEC.md` §8)
+These test the **safe-motion controller** — the CBF/barrier layer that sits
+above the exposure gate — *not* the dog's behavior. They are a **distinct class
+of pre-registered claim** from RQ1/RQ2: the question is *did the controller keep
+its guarantee*, not *did the dog improve*. Logged from the same sessions, but
+kept in a separate ledger. Everything here is a **criterion fixed in advance;
+the numbers are targets, not results** (no controller run has happened yet).
+Welfare precedence (§1, §8) outranks every one of them.
+
+| Metric | Definition (from event log) | Pre-registered criterion |
+|---|---|---|
+| **Barrier violations — PRIMARY safety claim** | count of `h < 0` events (measured `d_rd` below the active comfort margin `D_comfort`) across **all** sessions | **zero.** This is the headline claim: the certificate held on real hardware with a live, unpredictable subject. Any single violation *falsifies* it and is reported as such — not smoothed over |
+| Odometry drift | closed-loop pose error vs. **tape-measured ground truth** over a fixed drive; reported as drift % of path length | meet a pre-set threshold (owner to fix the number before first run); failing it means the state the barrier trusts is untrustworthy → estimator upgrade (spec §9.3) *before* the zero-violation claim can stand |
+| Comfort-margin trajectory | time-series of `D_comfort(s)` over the whole study | **descriptive/directional**, no pass/fail: does the maintained margin *shrink* as Shifu habituates? This ties the control layer to the behavioral outcome (the controller earns proximity from the dog's own behavior) |
+| Fixed-vs-adaptive-margin ablation | fixed-margin barrier vs. adaptive-margin barrier | pre-registered comparison on **min-distance-maintained** and **approach frequency**; the *direction* of the expected effect is stated here in advance, the magnitude is reported |
+
+**Separation of ledgers (stated in advance):** a clean zero-violation record
+with *no* behavioral change is still a valid controller result; a behavioral
+change accompanied by *any* barrier violation is a safety failure regardless of
+the behavior. The two are never traded against each other.
+
+**Relationship to bench validation:** these are the *on-hardware, live-subject*
+figures. They are additional to — not a substitute for — the bench spoof tests
+in `SAFETY.md` Layer 3 (spoof `d_rd` below `D_comfort`, confirm the forward
+command clamps to ≤ 0; pull the ToF, confirm fallback to exposure-gate
+behavior), which are engineering-validation and must pass before any session
+that engages the barrier.
+
 ## 6. Procedure per session (checklist)
 
 1. Fill hopper (count pieces in), power robot, start dashboard, confirm
@@ -182,8 +217,9 @@ acceptance from dispensed counts) cannot be wishful-thinking'd.
 ## 7. Threats to validity (declared before data collection)
 
 - **Reward latency (~5–9 s; ENGINEERING_REVIEW §1.5).** The marker fires at
-  dispense, ~5 s (ultrasonic path) to ~9 s (vision path) after actual
-  disengagement — well beyond the 1–2 s ideal for marker conditioning. The
+  dispense, ~5 s (ultrasonic path) to ~9 s (vision path — now the **YOLO
+  detector**, spec §9.1) after actual disengagement — well beyond the 1–2 s
+  ideal for marker conditioning. The
   contingency may therefore condition "being out of the zone and settled" more
   than the discrete act of leaving. Declared; the disengagement-latency metric
   is defined machine-side, so at least the *measurement* is unaffected. A
@@ -238,6 +274,8 @@ record and (ii) within-dog descriptive statistics.
 
 ### 9.1 Files
 - `events.jsonl` — machine log (dashboard, append-only; back it up weekly).
+  Once the barrier layer is live this also carries the CBF records (`h`-value
+  samples / `barrier_violation` events, `D_comfort` snapshots) that feed §5.4.
 - `sessions.csv` — from `/export/sessions.csv` or `analyze_sessions.py --csv`.
 - `session_notes.csv` — manual sheet, one row per session, columns:
   `date, session_id, exposure_level, planned_min, actual_min, treats_loaded,
@@ -258,12 +296,23 @@ record and (ii) within-dog descriptive statistics.
 - The `--generate-example` output is SYNTHETIC pipeline-test scaffolding and is
   never mixed with real logs (different filename, `synthetic` flag, session_id
   prefix).
+- **Controller-validation reporting (§5.4), kept separate from the behavioral
+  plots:** the barrier-violation count reported as an absolute integer over all
+  sessions (target zero, every violation itemized with timestamp/state if any
+  occur); odometry drift as a single %-of-path figure against the pre-set
+  threshold; `D_comfort(s)` as a full-study trajectory with phase boundaries;
+  the fixed-vs-adaptive ablation as a paired comparison on min-distance and
+  approach frequency. No inferential statistics here either — n = 1.
 
 ## 10. Declared limitations (to be repeated verbatim in any write-up)
 n = 1; owner-run; unblinded; no institutional ethics review (therefore no
 efficacy claim); limited withdrawal (§2.2); reward latency ~5–9 s (§7);
 single room; fear scores owner-coded on an unvalidated (though operationalized)
-scale; maturation uncontrolled.
+scale; maturation uncontrolled. For the controller-validation metrics (§5.4): a
+zero-violation record is a property of the *controller on this hardware with
+this subject*, not evidence the intervention helps dogs generally, and the CBF
+certificate is only as strong as the state estimate `d_rd` it trusts (hence
+odometry drift is a first-class measured result, not an assertion).
 
 ---
 *Amendments (append-only, dated):* — none yet.

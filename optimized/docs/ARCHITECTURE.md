@@ -1,8 +1,11 @@
 # CANIS — Architecture
 
-Diagrams for the full system as implemented in `optimized/` (behavior identical
-to the original tree plus the `[OPT-n]` hardening documented in
-`optimized/OPTIMIZATIONS.md`). All Mermaid — renders on GitHub.
+Diagrams for the full system as implemented in `optimized/`: the original
+behavior plus the `[OPT-n]` hardening (`optimized/OPTIMIZATIONS.md`) and the
+mobile-drivetrain / YOLO / CBF upgrade (§§5–7 below; `docs/MOBILE_UPGRADE_STATUS.md`).
+§§1–4 describe the system that ships **today** (stationary, `CANIS_MOBILE_ENABLED
+= 0`); §§5–7 describe the mobile/camera upgrade layered on top, inert until the
+flag is set. All Mermaid — renders on GitHub.
 
 ---
 
@@ -11,9 +14,9 @@ to the original tree plus the `[OPT-n]` hardening documented in
 ```mermaid
 flowchart TB
     subgraph PI["Raspberry Pi 5 — eyes + face"]
-        CAM["Pi Camera OV5647<br/>(CSI ribbon)"]
-        DET["vision/detect.py<br/>ArUco DICT_4X4_50, marker ID 0<br/>blur guard · grace [OPT-12] · frozen-frame guard [OPT-13]"]
-        DASH["dashboard/app.py (waitress)<br/>/ingest /command /detect /api/state<br/>event log [OPT-14] · CSV export"]
+        CAM["camera (per CANIS_CAMERA_MODE):<br/>A onboard CSI/USB · B ESP32-CAM MJPEG<br/>C fixed room camera"]
+        DET["vision/detect_yolo.py (DEFAULT)<br/>YOLO11n-NCNN dog detector (COCO 'dog')<br/>bearing + monocular range → /detect<br/>blur guard · grace [OPT-12] · frozen guard [OPT-13]<br/>(detect.py ArUco kept as fallback;<br/>detect_fixed.py serves mode C)"]
+        DASH["dashboard/app.py (waitress)<br/>/ingest /command /detect /api/state<br/>+ mobile: /telemetry /motion<br/>event log [OPT-14] · CSV export"]
         LOG[("events.jsonl<br/>append-only")]
         CAM --> DET
         DET -- "POST /detect {zone}" --> DASH
@@ -187,3 +190,127 @@ every timestamp in the record is stamped by the Pi at arrival. The event log is
 append-only JSONL (schema: `dashboard/event_log.py` docstring), and the session
 aggregation used by `/export/sessions.csv` and by the offline analyzer is the
 **same function**, so the two can never disagree.
+
+---
+
+## 5. Compute tiers (3-tier split) + the mobile / CBF upgrade
+
+Responsibility is split across three processors by *how fast* and *how
+certifiable* each duty must be. The split is unchanged by the mobile upgrade —
+the new work lands where it fits the existing tier contract, and none of it runs
+unless `CANIS_MOBILE_ENABLED = 1` (SAFE DEFAULT `0`).
+
+| Tier | Device | Existing duty | Added by the mobile/CBF upgrade |
+|---|---|---|---|
+| **Real-time** | Arduino Uno | dumb executor: motor PWM via L298N, gate servo, marker tone, beam-break; **1 s motion watchdog** | new `VEL <pwmL> <pwmR>` verb (differential drive); does NO kinematics — stays a certifiable executor. Watchdog **unchanged and supreme** |
+| **Coordinating** | ESP32 | PIR + 3× ultrasonic, confirmation filter, arousal FSM, exposure gate, buzzer, dispenser logic, WiFi link | reads 2× quadrature encoders on the **PCNT** peripheral (zero-CPU hardware counting); computes odometry `(v, ω)`; streams `/telemetry` @10 Hz; polls `/motion`, clamps `\|v\|/\|ω\|`, re-clamps `v ≤ 0` at `D_MIN`, maps to per-wheel PWM |
+| **Host** | Raspberry Pi 5 | vision (`detect_yolo.py`), dashboard, event log, study export | `optimized/control/`: EKF/complementary state estimator (odom ⊕ IMU ⊕ ToF ⊕ YOLO bearing), adaptive `D_comfort(s)`, the closed-form **CBF-QP** safety filter, reward-on-approach |
+
+Why encoders land on the ESP32, not the Uno: the Uno's two hardware interrupts
+get tight with two quadrature channels each; the ESP32 PCNT counts in hardware.
+This keeps the Arduino a pure executor — the failure-domain property from §1
+(the executor needs nothing else alive to stop safely) is preserved.
+
+```mermaid
+flowchart LR
+    subgraph PI5["Pi 5 — host (mobile additions)"]
+        EST["control/estimator.py<br/>EKF/complementary:<br/>odom ⊕ IMU ⊕ ToF ⊕ YOLO bearing<br/>→ d_rd, β, pose"]
+        CMF["control/comfort.py<br/>adaptive D_comfort(s) ∈ [D_MIN,D_MAX]"]
+        CBF["control/cbf.py<br/>closed-form CBF-QP<br/>u* = proj(u_nom): v·cosβ ≤ γ·h"]
+        RWD["control/reward.py<br/>voluntary-approach detector"]
+    end
+    TEL["ESP32 /telemetry @10 Hz<br/>enc_l/enc_r/odom_v/odom_omega/tof_m/heading"]
+    DETY["detect_yolo.py /detect<br/>bearing_deg · distance_m"]
+    MOT["/motion → 'MOVE v ω' | 'STOP'"]
+    TEL --> EST
+    DETY --> EST
+    EST --> CMF --> CBF
+    EST --> CBF
+    CBF --> MOT
+    EST --> RWD
+    RWD -. "on_reward callback" .-> MOT
+    MOT --> ESP32X["ESP32: clamp + v≤0 at D_MIN<br/>→ VEL pwmL pwmR"] --> UNOX["Uno: L298N (1 s watchdog)"]
+```
+
+The barrier is the new **Layer 3** in `docs/SAFETY.md`; wire formats are LAW in
+`docs/INTERFACE_CONTRACT.md`; the math is `docs/SAFE_MOTION_CBF_SPEC.md`.
+
+---
+
+## 6. Two operating modes — stationary (default) vs. mobile
+
+One codebase, one compile-time switch (`CANIS_MOBILE_ENABLED`, announced live via
+`/config` and `/ingest`). The mode changes only whether the drivetrain stack is
+active; every existing fail-safe is in force in both.
+
+```mermaid
+flowchart TB
+    SW{"CANIS_MOBILE_ENABLED"}
+    SW -- "0 — SAFE DEFAULT<br/>(ships this way; this week's study)" --> STAT
+    SW -- "1 — CBF differential drive<br/>(encoder motors wired in)" --> MOB
+    subgraph STAT["STATIONARY"]
+        S1["no /motion poll · no VEL · no /telemetry<br/>encoder pins untouched"]
+        S2["YOLO → /detect → /command → arousal FSM<br/>dispenser · dashboard · all fail-safes UNCHANGED"]
+        S3["/ingest is byte-identical to the<br/>pre-upgrade wire shape (new fields omitted)"]
+        S4["legacy motion (roam/orient/flee) still<br/>governed only by its own flags"]
+    end
+    subgraph MOB["MOBILE"]
+        M1["locomotion source = CBF pipeline ONLY<br/>estimator → D_comfort → QP → MOVE → VEL"]
+        M2["replaces legacy open-loop roam words"]
+        M3["every prior fail-safe OUTRANKS the CBF:<br/>exposure gate · NEVER_APPROACH (compile-guarded)<br/>· Uno 1 s watchdog · power-cycle→exposure 0"]
+        M4["degradation is one-way toward stationary:<br/>sensor/link loss ⇒ no distance-reducing cmd / STOP"]
+    end
+```
+
+**Stationary is the shipped default** and is what runs the conditioning study
+this week — no encoder motors required. **Mobile** activates only once the
+encoder gearmotors are wired in and the flag is flipped; the compile guard
+`CANIS_MOBILE_ENABLED && !CANIS_NEVER_APPROACH → #error` forbids a mobile build
+that could drive at the dog. Full semantics: `INTERFACE_CONTRACT.md` §4.
+
+---
+
+## 7. Camera architectures A / B / C (`CANIS_CAMERA_MODE`)
+
+Perception is now a **YOLO dog detector** (`detect_yolo.py`, COCO `dog` class) —
+no marker on the dog. ArUco is retained in two places: `detect.py` as a
+backward-compatible fallback reporter, and **on the robot** in mode C, where a
+DICT_4X4_50 marker (`CANIS_ROBOT_MARKER_ID`=17) localizes the rigid robot while
+YOLO finds the dog. All three modes POST the *same* detection contract (§3 of
+`INTERFACE_CONTRACT.md`), so the ESP32, controller, and dashboard are
+camera-mode-agnostic — you pick by setting one constant, not by rewriting.
+
+```mermaid
+flowchart TB
+    subgraph A["A — onboard (SAFE/simple DEFAULT)"]
+        A1["camera on the Pi (picamera2 / USB)"]
+        A2["detect_yolo.py — robot's-eye"]
+        A1 --> A2
+    end
+    subgraph B["B — esp32cam_stream"]
+        B1["ESP32-CAM OV2640<br/>MJPEG @ :81/stream"]
+        B2["off-board Pi pulls frames over WiFi<br/>detect_yolo.py (same guards, frame SOURCE swapped)"]
+        B1 -. "WiFi (flaky — safety stays on onboard ToF)" .-> B2
+    end
+    subgraph C["C — fixed_room"]
+        C1["fixed room camera → off-board Pi"]
+        C2["detect_fixed.py — room-frame geometry:<br/>YOLO=dog on floor plane,<br/>ArUco marker=robot pose+heading"]
+        C1 --> C2
+    end
+    A2 & B2 & C2 --> DETPOST["POST /detect<br/>zone · dog_present · bearing_deg · distance_m · confidence"]
+```
+
+| | A `onboard` | B `esp32cam_stream` | C `fixed_room` |
+|---|---|---|---|
+| View | robot's-eye | robot's-eye | fixed, room-frame |
+| Pi location | on the robot | off-board | off-board |
+| New hardware | none | 1× ESP32-CAM | fixed camera mount |
+| Robot identity | — | — | ArUco marker on robot |
+| Reliability | high | streaming is flaky | highest (best study data) |
+| Bearing sign | camera frame | camera frame | **robot frame** (preserves `zoneToDir()` left/right) |
+| Failure fail-safe | grace → silence | reconnect; **STOP** on stale cmd | marker lost → `distance_m` null; **STOP** on stale cmd |
+| When (recommended) | this week (start here) | long-term / room-portable | when going mobile in one room |
+
+Modes B and C put the Pi off-board, so the drive command rides WiFi — see
+`SAFETY.md` Layer 3.4 for the added WiFi/stream failure mode (fail-safe: STOP).
+Detailed recommendation and sequencing: `docs/MOBILE_UPGRADE_STATUS.md` §5b.
