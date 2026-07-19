@@ -1,5 +1,11 @@
 # CANIS — Stationary Robot Integration (full wiring, one pass)
 
+> ⚠️ **This is a PLAN, not a status report.** The unchecked boxes below are the
+> intended sequence — they are **not** kept in sync with what is actually built,
+> so do not read an unticked box as "not done" or a ticked one as current.
+> **For real, dated build state see [`RESUME_HERE.md`](RESUME_HERE.md).**
+
+
 Build the complete stationary reward station. **Skipped (mobile-phase):** L298N,
 2 motors, encoder pins, battery, buck. Power is USB (it's a plug-in station).
 
