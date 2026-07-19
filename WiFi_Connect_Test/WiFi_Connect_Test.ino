@@ -1,7 +1,7 @@
 /*
   CANIS — WiFi connect diagnostic (ESP32)
   ---------------------------------------
-  We know "YOUR_WIFI_NAME" is visible, WPA2, strong (-67 dBm) — yet connect times out.
+  We know "<HOME_SSID>" is visible, WPA2, strong (-67 dBm) — yet connect times out.
   This sketch tries to connect with a WiFi EVENT HANDLER that prints the exact
   reason the AP rejected/dropped us. That reason code tells us the real cause.
 
