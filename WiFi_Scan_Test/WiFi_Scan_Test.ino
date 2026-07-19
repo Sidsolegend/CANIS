@@ -2,14 +2,14 @@
   CANIS — WiFi diagnostic (ESP32)
   -------------------------------
   Not part of the robot. Flash this temporarily to find out WHY the ESP32 can't
-  join "YOUR_WIFI_NAME". It scans every 2.4 GHz network the ESP32 can see and prints the
+  join "<HOME_SSID>". It scans every 2.4 GHz network the ESP32 can see and prints the
   name, signal strength (RSSI), and security type.
 
   Read the output:
-    - "YOUR_WIFI_NAME" NOT in the list      -> ESP32 can't see it (5 GHz only / out of range)
-    - "YOUR_WIFI_NAME" listed, RSSI < -80   -> too weak, move ESP32 closer to the router
-    - "YOUR_WIFI_NAME" listed as WPA3        -> ESP32 likely can't join; switch router to WPA2
-    - "YOUR_WIFI_NAME" listed, WPA2, strong  -> it's a PASSWORD problem in the real sketch
+    - "<HOME_SSID>" NOT in the list      -> ESP32 can't see it (5 GHz only / out of range)
+    - "<HOME_SSID>" listed, RSSI < -80   -> too weak, move ESP32 closer to the router
+    - "<HOME_SSID>" listed as WPA3        -> ESP32 likely can't join; switch router to WPA2
+    - "<HOME_SSID>" listed, WPA2, strong  -> it's a PASSWORD problem in the real sketch
 
   Serial Monitor @ 115200.
 */
