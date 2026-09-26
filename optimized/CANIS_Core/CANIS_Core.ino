@@ -116,11 +116,16 @@ const int   PI_PORT   = CANIS_PI_PORT;
 const char* CANIS_TOKEN = SECRET_CANIS_TOKEN;
 
 // ---------- Sensor pins ----------
-const int PIR_PIN  = 27;   // PIR OUT (3.3V logic, read directly)
+const int PIR_PIN  = -1;   // [bench 2026-09] PIR REMOVED (redundant with the camera); GPIO 27 (the
+                           // old PIR pin) now carries left-encoder B. -1 = no PIR, reads as "clear".
 const int   US_TRIG[3] = { 32, 26, 14 };          // LEFT, CENTRE, RIGHT
 const int   US_ECHO[3] = { 34, 25, 35 };          // LEFT, CENTRE, RIGHT
 const char* US_DIR[3]  = { "LEFT", "FORWARD", "RIGHT" };
 const int   NUM_US = CANIS_NUM_US;
+// Index 1 is the CENTRE SR04M-2; it can be left unwired (CANIS_US_CENTRE_ENABLED 0).
+// (A macro, not a function: a function here would become the first definition in the file and the
+// Arduino auto-prototypes would be inserted above `enum State`, breaking the build.)
+#define usEnabled(i) (!((i) == 1 && !CANIS_US_CENTRE_ENABLED))
 
 // ---------- Arduino dispenser link ----------
 // [OPT-7] The original wired TX only (ARD_RX_PIN = -1) to free GPIO14 for the
@@ -141,7 +146,9 @@ const int ARD_RX_PIN = -1;   // unused (frees GPIO14 for US_TRIG[2])
 #endif
 
 // ---------- Buzzer ----------
-const int BUZZER_PIN = 33;
+const int BUZZER_PIN = -1;   // [bench 2026-09] ESP32 correction-cue buzzer NOT wired (GUARD-mode only);
+                             // GPIO 33 now belongs to the left encoder. The treat marker tone plays on
+                             // the Uno's pin 6. Set back to 33 (and move the encoder) to re-enable.
 
 // ---------- Confirmation filter (from Sensors_Test) ----------
 struct Confirmed {
@@ -296,13 +303,13 @@ unsigned long lastVelTx = 0;           // last VEL transmit (500 ms watchdog kee
 void setup() {
   Serial.begin(115200);
   delay(300);
-  pinMode(PIR_PIN, INPUT_PULLDOWN);
+  if (PIR_PIN >= 0) pinMode(PIR_PIN, INPUT_PULLDOWN);
   for (int i = 0; i < NUM_US; i++) {
     pinMode(US_TRIG[i], OUTPUT);
     pinMode(US_ECHO[i], INPUT);
     digitalWrite(US_TRIG[i], LOW);
   }
-  pinMode(BUZZER_PIN, OUTPUT);
+  if (BUZZER_PIN >= 0) pinMode(BUZZER_PIN, OUTPUT);
 
   Serial2.begin(9600, SERIAL_8N1, ARD_RX_PIN, ARD_TX_PIN);
 
@@ -555,13 +562,13 @@ void selfTestSensors() {
     if (millis() - lastRow < CANIS_SAMPLE_MS) continue;
     lastRow = millis();
 
-    bool pirRaw = digitalRead(PIR_PIN) == HIGH;   // [C7] pin is already INPUT_PULLDOWN
+    bool pirRaw = (PIR_PIN >= 0) && digitalRead(PIR_PIN) == HIGH;   // [C7] pin is already INPUT_PULLDOWN
     if (pirRaw) pirEverHigh = true;
     stPir.update(pirRaw);
 
     Serial.print("     ");
     for (int i = 0; i < NUM_US; i++) {
-      float d = readDistanceCm(US_TRIG[i], US_ECHO[i]);
+      float d = usEnabled(i) ? readDistanceCm(US_TRIG[i], US_ECHO[i]) : -1.0f;
       bool valid = (d > 0 && d < 400);          // real echo in a plausible range
       if (valid) usEverValid[i] = true;
       stZone[i].update(d > 0 && d <= CANIS_ZONE_CM);
@@ -578,8 +585,9 @@ void selfTestSensors() {
   Serial.println("     --- sensor results ---");
   for (int i = 0; i < NUM_US; i++) {
     Serial.print("     ultrasonic "); Serial.print(US_DIR[i]); Serial.print(": ");
-    Serial.println(usEverValid[i] ? "PASS (got valid echoes)"
-                                   : "FAIL (no valid echo — check wiring / 1k series resistor)");
+    Serial.println(!usEnabled(i) ? "SKIPPED (disabled in canis_config.h)"
+                   : usEverValid[i] ? "PASS (got valid echoes)"
+                                    : "FAIL (no valid echo — check wiring / 1k series resistor)");
   }
   Serial.print("     PIR: ");
   Serial.println(pirEverHigh ? "PASS (saw motion)"
@@ -608,14 +616,14 @@ void readSensors(unsigned long now) {
 
   bool warm = (now - bootTime) >= CANIS_WARMUP_MS;
 
-  bool pirRaw = digitalRead(PIR_PIN) == HIGH;
+  bool pirRaw = (PIR_PIN >= 0) && digitalRead(PIR_PIN) == HIGH;
   if (!warm) pirRaw = false;
   if (pir.update(pirRaw))
     Serial.printf("  [SENSOR] PIR  -> %s\n",  pir.state  ? "MOTION"  : "clear");
 
   bool anyZone = false;
   for (int i = 0; i < NUM_US; i++) {
-    float dist = readDistanceCm(US_TRIG[i], US_ECHO[i]);
+    float dist = usEnabled(i) ? readDistanceCm(US_TRIG[i], US_ECHO[i]) : -1.0f;
     usCm[i] = dist;
     bool inZoneRaw = (dist > 0 && dist <= CANIS_ZONE_CM);
     if (usZone[i].update(inZoneRaw))
@@ -724,6 +732,10 @@ void runStateBehavior(unsigned long now) {
       // in the guarded area). PLAY rewards chasing, PLACE rewards settling — each
       // does its own, so don't dump calm treats into an empty room here.
       if (robotMode != CANIS_MODE_GUARD) break;
+#if CANIS_CALM_PRESENCE_WINDOW_MS > 0
+      // [bench 2026-09] no calm treats unless the camera has actually seen him recently.
+      if (lastVisionRefresh == 0 || now - lastVisionRefresh > CANIS_CALM_PRESENCE_WINDOW_MS) break;
+#endif
       if (now - bootTime >= CANIS_WARMUP_MS &&
           now - calmSince >= CANIS_CALM_REWARD_MS && now - lastCalmReward >= CANIS_CALM_REWARD_MS) {
         reward("sustained calm");
@@ -743,7 +755,8 @@ void runStateBehavior(unsigned long now) {
         // baseline probe measures — log it, but fire no buzzer and no motion.
         Serial.println("  [OBSERVE] correction WOULD fire (buzzer + orient suppressed)");
 #else
-        tone(BUZZER_PIN, CANIS_CORRECTION_TONE_FREQ, CANIS_CORRECTION_TONE_MS);
+        if (BUZZER_PIN >= 0) tone(BUZZER_PIN, CANIS_CORRECTION_TONE_FREQ, CANIS_CORRECTION_TONE_MS);
+        else Serial2.printf("BEEP %d %d\n", (int)CANIS_CORRECTION_TONE_FREQ, (int)CANIS_CORRECTION_TONE_MS);   // shared buzzer on the Uno's pin 6
         Serial.print("  [OUTPUT] correction cue (buzzer)");
 #if CANIS_NEVER_APPROACH
         // HARD INVARIANT: never move toward the dog. Guard correction is the

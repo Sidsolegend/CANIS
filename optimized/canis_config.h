@@ -57,7 +57,10 @@
 #define CANIS_ZONE_CM              30.0f    // "in the forbidden zone" if closer than this
 #define CANIS_WARMUP_MS            60000UL  // ignore PIR for the first 60 s
 #define CANIS_ECHO_TIMEOUT_US      12000UL  // ~2 m cap; the close-range zone needs no more
-#define CANIS_NUM_US               3        // set to 2 to disable the third ultrasonic
+#define CANIS_NUM_US               3        // sensor count; array order is LEFT, CENTRE, RIGHT, so 2 would drop RIGHT
+// 1 = the SR04M-2 (CENTRE, forward) is wired and read (default). 0 = it is NOT wired and the
+// firmware skips it (no floating-echo phantom readings; self-test says SKIPPED).
+#define CANIS_US_CENTRE_ENABLED    1
 
 // ======================= Arousal / state tunables =======================
 #define CANIS_AROUSAL_MAX          100.0f
@@ -166,12 +169,17 @@
 #define CANIS_REWARD_COOLDOWN_MS   20000UL  // min gap between any two treats
 #define CANIS_MAX_SESSION_REWARDS  30       // hard cap until reboot
 #define CANIS_CALM_REWARD_MS       30000UL  // sustained-calm reward interval; MUST be >= REWARD_COOLDOWN_MS
+// GUARD's sustained-calm treat also requires that the camera saw Shifu within this window, so it
+// cannot drop treats into an empty house ("calm" only means "nothing detected"; no sensor can tell
+// an empty room from a dog who is staying away). 0 = disabled (old behaviour: fires whenever CALM).
+#define CANIS_CALM_PRESENCE_WINDOW_MS  600000UL   // 10 min
 
 // ======================= Dispense-ACK (NEW, optional) =======================
 // If the Arduino echoes "ACK" after a completed drop, the ESP32 counts the
 // reward only on ACK (delivery) rather than on send (intent). Toggle off to
 // keep the original count-on-send behavior on hardware that can't ACK.
-#define CANIS_USE_DISPENSE_ACK     1
+#define CANIS_USE_DISPENSE_ACK     0  // [bench 2026-09] no 1k/2k divider wired for the
+                                       // pin11->GPIO4 return line — count-on-send instead
 // ACK window sized for the WORST case on the Arduino with jam detection [OPT-11]
 // enabled: marker (120) + pre-drop (150) + gate (150) + drop wait (600) +
 // retry gate (150) + retry wait (600) ~= 1.8 s. 2.5 s gives margin.
@@ -198,14 +206,20 @@
 
 // Quadrature encoder inputs (ESP32 PCNT peripheral — counts in hardware, zero
 // CPU cost; this is WHY the encoders land on the ESP32 and not the Uno).
-// Pin budget: 27 (PIR), 33 (buzzer), 13/4 (Serial2 link), 32/34, 26/25, 14/35
-// (ultrasonics) are taken; 21/22 are RESERVED for I2C (IMU + VL53LX ToF).
-// 16-19 are free on WROOM boards. (WROVER boards burn 16/17 for PSRAM — remap
-// the RIGHT encoder to input-only 36/39 there; encoders are inputs, so OK.)
-#define CANIS_ENC_L_A_PIN          18       // left encoder channel A
-#define CANIS_ENC_L_B_PIN          19       // left encoder channel B (quadrature -> signed counts)
-#define CANIS_ENC_R_A_PIN          16       // right encoder channel A
-#define CANIS_ENC_R_B_PIN          17       // right encoder channel B
+// Pin budget: 27 (PIR), 13 (Serial2 link TX), 32/34, 26/25, 14/35 (ultrasonics)
+// are taken; 21/22 are RESERVED for I2C (IMU + VL53LX ToF).
+// [bench 2026-09] The ESP32 sits on a breadboard that covers every hole beside
+// the 16-19 / 3V3 side, so the encoders are REMAPPED to pins reachable on the
+// other side: 33 (freed — the ESP32 correction buzzer is unwired, BUZZER_PIN=-1
+// in CANIS_Core.ino), 36/39 (input-only, no internal pull-ups — the encoder
+// boards must drive their outputs themselves) and 27 (the old PIR pin — the PIR
+// was removed, PIR_PIN=-1 in CANIS_Core.ino). Avoid GPIO 12: it is a BOOT
+// STRAPPING pin and a HIGH on it at reset can stop the ESP32 booting.
+// (Original WROOM defaults were 18/19 left, 16/17 right.)
+#define CANIS_ENC_L_A_PIN          33       // left encoder channel A
+#define CANIS_ENC_L_B_PIN          27       // left encoder channel B (quadrature -> signed counts)
+#define CANIS_ENC_R_A_PIN          36       // right encoder channel A (input-only)
+#define CANIS_ENC_R_B_PIN          39       // right encoder channel B (input-only)
 
 // Drivetrain geometry — MEASURE these on the real chassis before trusting any
 // odometry number the barrier layer consumes; a wrong wheel base silently

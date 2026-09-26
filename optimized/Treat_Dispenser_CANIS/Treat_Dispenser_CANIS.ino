@@ -119,8 +119,8 @@ const int IN4 = 12;
 const int ENB = 5;
 
 // --- Servo angles ---
-const int CLOSED_ANGLE = 80;
-const int OPEN_ANGLE   = 0;
+const int CLOSED_ANGLE = 120;  // [bench 2026-09] new external servo mount, flap re-seated on the horn: 120 covers the gate hole
+const int OPEN_ANGLE   = 40;   // ...and 40 swings it clear (same 80 deg swing; the original mount was 80 closed / 0 open)
 
 // --- Dispenser timing ---
 const int MARKER_FREQ  = 2000;
@@ -290,6 +290,19 @@ void handleCommand(const char* cmd) {
   else if (strcmp(cmd, "LEFT")     == 0) drive(-PIVOT_SPEED,  PIVOT_SPEED, "LEFT");
   else if (strcmp(cmd, "RIGHT")    == 0) drive( PIVOT_SPEED, -PIVOT_SPEED, "RIGHT");
   else if (strcmp(cmd, "STOP")     == 0) stopMotors();
+  // [bench 2026-09] "BEEP <hz> <ms>" — the ESP32 has no buzzer of its own in this build, so it asks
+  // this Uno to play its GUARD-mode correction cue on the pin-6 buzzer.
+  else if (strncmp(cmd, "BEEP", 4) == 0 && cmd[4] == ' ') {
+    int hz = 0, ms = 0;
+    if (sscanf(cmd + 5, "%d %d", &hz, &ms) == 2 && hz >= 100 && hz <= 5000 && ms > 0 && ms <= 2000)
+      tone(BUZZER_PIN, hz, ms);
+  }
+  // [bench 2026-09] "SERVO <deg>" — calibration aid: park the servo at an exact angle (0-180) so the
+  // real CLOSED/OPEN angles for this mount can be found by eye. Not used by the normal flow.
+  else if (strncmp(cmd, "SERVO", 5) == 0 && cmd[5] == ' ') {
+    int deg = atoi(cmd + 6);
+    if (deg >= 0 && deg <= 180) { gate.write(deg); Serial.print("[cal] servo -> "); Serial.println(deg); }
+  }
   // [MOBILE] "VEL <pwmL> <pwmR>" — per-wheel signed PWM from the ESP32's CBF
   // pipeline. Same executor path + same watchdog as the word verbs above.
   else if (strncmp(cmd, "VEL", 3)  == 0 && cmd[3] == ' ') velCommand(cmd + 4);
