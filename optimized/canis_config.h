@@ -45,6 +45,13 @@
 // CHECK_MS (5 s) restarts the attempt before it can finish and the link never comes up (seen on the bench
 // 2026-10). Must be >= CHECK_MS.
 #define CANIS_WIFI_RETRY_MS        30000UL
+// After associating with the AP, wait this long for DHCP to hand out an IP before kicking the link again.
+#define CANIS_WIFI_DHCP_WAIT_MS    90000UL
+// Optional FIXED IP for the ESP32, skipping DHCP. On the bench (2026-10) the ESP32 associates at about -71 dBm but never
+// receives a DHCP lease. "" = use DHCP (the default). The address must be unused and outside the router's DHCP pool.
+#define CANIS_WIFI_STATIC_IP       "192.168.86.15"
+#define CANIS_WIFI_GATEWAY         "192.168.86.1"
+#define CANIS_WIFI_SUBNET          "255.255.255.0"
 
 // Vision-detection local TTL [OPT-9] (NEW): visionActive is a latch that is
 // normally cleared by a successful /command poll returning "NONE". If WiFi or

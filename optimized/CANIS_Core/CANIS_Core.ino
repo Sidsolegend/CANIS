@@ -365,13 +365,67 @@ void loop() {
 }
 
 // ---------- WiFi ----------
+// [bench 2026-10] Say WHY the link drops. Reason codes are ESP-IDF wifi_err_reason_t values.
+const char* wifiReasonName(int r) {
+  switch (r) {
+    case 1:   return "UNSPECIFIED";
+    case 2:   return "AUTH_EXPIRE";
+    case 3:   return "AUTH_LEAVE";
+    case 4:   return "ASSOC_EXPIRE";
+    case 8:   return "ASSOC_LEAVE (AP kicked us)";
+    case 15:  return "4WAY_HANDSHAKE_TIMEOUT (wrong password or weak signal)";
+    case 200: return "BEACON_TIMEOUT (lost the AP: weak signal)";
+    case 201: return "NO_AP_FOUND (SSID not seen: wrong name, 5 GHz-only, or out of range)";
+    case 202: return "AUTH_FAIL (wrong password?)";
+    case 203: return "ASSOC_FAIL";
+    case 204: return "HANDSHAKE_TIMEOUT";
+    case 205: return "CONNECTION_FAIL";
+    default:  return "other";
+  }
+}
+volatile unsigned long wifiAssocMs = 0;   // millis() when we last associated with the AP and were waiting for an IP; 0 = not waiting
+void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info) {
+  static unsigned long lastLogMs = 0;
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
+      unsigned long n = millis();
+      if (n - lastLogMs > 1500) {   // the stack can retry many times a second; do not flood the log
+        lastLogMs = n;
+        int r = info.wifi_sta_disconnected.reason;
+        Serial.printf("  [NET] disconnected, reason=%d %s\n", r, wifiReasonName(r));
+      }
+      break;
+    }
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      wifiAssocMs = millis();
+      Serial.printf("  [NET] associated with the AP, channel %d, signal %d dBm; waiting for an IP\n",
+                    info.wifi_sta_connected.channel, WiFi.RSSI());
+      break;
+    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
+      wifiAssocMs = 0;
+      Serial.printf("  [NET] got an IP, signal %d dBm (about -50 is strong, -70 is weak, -80 is unusable)\n", WiFi.RSSI());
+      break;
+    default: break;
+  }
+}
+
 void connectWiFi() {
+  WiFi.onEvent(onWifiEvent);
   Serial.print("WiFi: connecting to "); Serial.println(WIFI_SSID);
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
   WiFi.disconnect(true, true);
   delay(200);
   WiFi.setSleep(false);
+  if (CANIS_WIFI_STATIC_IP[0]) {   // fixed IP: skips DHCP entirely
+    IPAddress ip, gw, sn;
+    if (ip.fromString(CANIS_WIFI_STATIC_IP) && gw.fromString(CANIS_WIFI_GATEWAY) && sn.fromString(CANIS_WIFI_SUBNET)) {
+      WiFi.config(ip, gw, sn, gw);   // DNS = the router
+      Serial.printf("WiFi: using fixed IP %s (DHCP skipped)\n", CANIS_WIFI_STATIC_IP);
+    } else {
+      Serial.println("WiFi: bad fixed-IP settings in canis_config.h, falling back to DHCP");
+    }
+  }
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   unsigned long start = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
@@ -392,6 +446,11 @@ void wifiWatchdog(unsigned long now) {
   if (now - lastWifiCheck < CANIS_WIFI_CHECK_MS) return;
   lastWifiCheck = now;
   if (WiFi.status() != WL_CONNECTED) {
+    // Associated but no IP yet: DHCP can take a while on a weak link, and reconnect() would restart it.
+    if (wifiAssocMs != 0 && millis() - wifiAssocMs < CANIS_WIFI_DHCP_WAIT_MS) {
+      Serial.printf("  [NET] associated, still waiting for an IP (%lu s)\n", (millis() - wifiAssocMs) / 1000UL);
+      return;
+    }
     // status codes: 1 NO_SSID_AVAIL (AP not seen), 4 CONNECT_FAILED (auth/assoc), 5 CONNECTION_LOST, 6 DISCONNECTED
     static unsigned long lastKick = 0;
     if (lastKick == 0 || now - lastKick >= CANIS_WIFI_RETRY_MS) {
@@ -467,7 +526,9 @@ void handleInput() {
         if (usCm[i] > 0) Serial.print(usCm[i], 1); else Serial.print("none");
         Serial.print(usZone[i].state ? "(IN ZONE)" : "");
       }
-      Serial.print("   zone limit="); Serial.print((float)CANIS_ZONE_CM, 0); Serial.println(" cm");
+      Serial.print("   zone limit="); Serial.print((float)CANIS_ZONE_CM, 0); Serial.print(" cm");
+      if (WiFi.status() == WL_CONNECTED) { Serial.print("   WiFi OK "); Serial.print(WiFi.RSSI()); Serial.println(" dBm"); }
+      else { Serial.print("   WiFi DOWN (status="); Serial.print((int)WiFi.status()); Serial.println(")"); }
     } else if (c == 's') {
       stopMotion(millis());
       Serial.println("  [MANUAL] STOP");
