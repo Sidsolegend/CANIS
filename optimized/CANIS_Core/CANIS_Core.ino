@@ -318,7 +318,7 @@ void setup() {
 #endif
 
   Serial.println("\nCANIS core online (optimized). PIR warming up (~60s).");
-  Serial.println("Keys:  t=trigger  r=reset  d=dispense  m=arm exposure  y=confirm exposure  f=test fwd  s=stop  c=self-test  g=GUARD  p=PLAY  b=PLACE");
+  Serial.println("Keys:  t=trigger  r=reset  d=dispense  m=arm exposure  y=confirm exposure  f=test fwd  s=stop  u=show ultrasonics  c=self-test  g=GUARD  p=PLAY  b=PLACE");
 #if CANIS_OBSERVE_ONLY
   Serial.println("*** OBSERVE-ONLY BUILD [B5]: sensing + reporting only — NO treat/buzzer/motion ***");
 #endif
@@ -458,6 +458,16 @@ void handleInput() {
       startMotion("FORWARD", 1500, millis());
       motionPhase = 0;
       Serial.println("  [MANUAL] test FORWARD (1.5s)");
+    } else if (c == 'u') {
+      // [bench 2026-10] read-only: what each ultrasonic currently reads (-1 = no echo / skipped), and
+      // whether it counts as "in zone". For aiming sensors and finding one that sees the chassis/wheel.
+      Serial.print("  [SENSORS] cm:");
+      for (int i = 0; i < NUM_US; i++) {
+        Serial.print("  "); Serial.print(US_DIR[i]); Serial.print("=");
+        if (usCm[i] > 0) Serial.print(usCm[i], 1); else Serial.print("none");
+        Serial.print(usZone[i].state ? "(IN ZONE)" : "");
+      }
+      Serial.print("   zone limit="); Serial.print((float)CANIS_ZONE_CM, 0); Serial.println(" cm");
     } else if (c == 's') {
       stopMotion(millis());
       Serial.println("  [MANUAL] STOP");

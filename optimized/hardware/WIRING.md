@@ -73,6 +73,13 @@ exception: on its own bank and WiFi-only, it needs no shared ground.)*
 
 ## ESP32 (DevKit V1) — pin map
 
+> **As built, 2026-10 (the `#define`s in `canis_config.h` and the constants in `CANIS_Core.ino` win):**
+> the PIR is **removed** (`PIR_PIN = -1`) and the ESP32 buzzer is **not wired** (`BUZZER_PIN = -1`; the
+> buzzer is on the Uno's pin 6 behind a 220 ohm resistor). The encoders use **remapped pins** because the
+> breadboard covers the GPIO 16-19 / 3V3 side: left A/B = **33 / 27**, right A/B = **36 / 39**
+> (36/39 are input-only, no pull-ups). Encoder VCC comes from the **Uno's 3V3** pin. The rows below show
+> the original WROOM plan.
+
 | GPIO | Use | Dir | Note |
 |------|-----|-----|------|
 | 27 | PIR `OUT` | IN (pulldown) | reads LOW if PIR unplugged → no phantom motion |
@@ -97,7 +104,9 @@ exception: on its own bank and WiFi-only, it needs no shared ground.)*
 **Three ultrasonics** (2× HC-SR04 + 1× waterproof SR04M-2) are mounted
 left/centre/right and fired **sequentially** in firmware. Each `ECHO` needs
 **its own 1 kΩ series resistor**. ⚠️ The **SR04M-2 has a ~25 cm blind zone**;
-put it on the longest-range position. Set `CANIS_NUM_US = 2` to run HC-SR04s only.
+put it on the longest-range position. To run without it, set `CANIS_US_CENTRE_ENABLED 0`
+in `canis_config.h` (the firmware then skips the CENTRE sensor). Do **not** use `CANIS_NUM_US = 2`:
+the arrays are ordered LEFT, CENTRE, RIGHT, so that would drop the RIGHT sensor, not the SR04M-2.
 
 Serial2 RX is `-1` (unused) in firmware so the UART no longer claims GPIO 14.
 
