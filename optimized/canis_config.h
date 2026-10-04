@@ -191,6 +191,13 @@
 #define CANIS_REWARD_COOLDOWN_MS   20000UL  // min gap between any two treats
 #define CANIS_MAX_SESSION_REWARDS  30       // hard cap until reboot
 #define CANIS_CALM_REWARD_MS       30000UL  // sustained-calm reward interval; MUST be >= REWARD_COOLDOWN_MS
+// Treat when he STOPS barking. The Pi's bark detector (audio/detect_bark.py) signals a 'quiet' event through the
+// dashboard (X-CANIS-Quiet-Seq / -Age headers on GET /command); the ESP32 then calls reward() as usual, so the
+// cooldown and the daily cap still apply. BARK_QUIET_S is used by the detector on the Pi (mirrored in canis_config.py).
+// Set BARK_REWARD_ENABLED to 0 during the baseline week.
+#define CANIS_BARK_REWARD_ENABLED  1
+#define CANIS_BARK_QUIET_S         5        // seconds of quiet after a bark before the treat
+#define CANIS_BARK_MAX_AGE_S       10       // ignore a quiet event older than this (e.g. a poll that was delayed)
 // GUARD's sustained-calm treat also requires that the camera saw Shifu within this window, so it
 // cannot drop treats into an empty house ("calm" only means "nothing detected"; no sensor can tell
 // an empty room from a dog who is staying away). 0 = disabled (old behaviour: fires whenever CALM).

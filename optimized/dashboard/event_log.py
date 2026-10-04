@@ -24,6 +24,9 @@ EVENT SCHEMA (one JSON object per line, append-only):
                                                           (~1 Hz while the dog is
                                                           visible; episodes are
                                                           reconstructed by gap)
+    bark              {duration_s, peak_db}               audio detector heard a bark
+    bark_quiet        {barks, accepted}                   quiet after a bark episode (accepted=treat signalled)
+    mic_status        {ok}                                bark microphone lost / back
     exposure_change   {from, to}                          EXPOSURE_LEVEL changed
     firmware_reboot   {uptime_sec}                        uptime went backwards
     link_gap          {gap_sec}                           ESP32 silent > STALE_AFTER,

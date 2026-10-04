@@ -811,6 +811,88 @@ def detect():
     return jsonify({"ok": True})
 
 
+# ---------------------------------------------------------------------------
+# Bark / "he went quiet" events from the Pi's audio detector (INTERFACE_CONTRACT §5)
+# ---------------------------------------------------------------------------
+class BarkState:
+    """Latest events from audio/detect_bark.py.
+
+    quiet_seq is an EPOCH-SECONDS counter (strictly increasing even across a dashboard restart), carried to
+    the ESP32 in the X-CANIS-Quiet-Seq header of GET /command (with X-CANIS-Quiet-Age, seconds since it happened, so a late poll can never fire a stale treat). The ESP32 treats the first value it sees after
+    boot as a baseline and rewards only when the value later INCREASES, so a restart or a reconnect can never
+    replay an old treat."""
+
+    VALID = ("bark", "quiet", "mic_lost", "mic_ok")
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self.quiet_seq = 0
+        self.quiet_ts = None        # when the last ACCEPTED quiet happened
+        self.mic_ok = None          # None = never heard from the detector
+        self.last_bark_ts = None
+        self.barks_total = 0
+        self.last_event = None
+
+    def apply(self, event, now=None):
+        """Apply a validated event. Returns True if it was a 'quiet' that was accepted."""
+        now = time.time() if now is None else now
+        with self._lock:
+            self.last_event = event
+            if event == "bark":
+                self.last_bark_ts = round(now, 3)
+                self.barks_total += 1
+                self.mic_ok = True
+            elif event == "mic_lost":
+                self.mic_ok = False
+            elif event == "mic_ok":
+                self.mic_ok = True
+            elif event == "quiet":
+                if self.mic_ok is False:      # silence from a dead mic is not a quiet dog
+                    return False
+                self.mic_ok = True
+                self.quiet_seq = max(int(now), self.quiet_seq + 1)
+                self.quiet_ts = now
+                return True
+        return False
+
+    def snapshot(self):
+        with self._lock:
+            age = round(time.time() - self.quiet_ts, 1) if self.quiet_ts else -1.0
+            return {"quiet_seq": self.quiet_seq, "quiet_age_s": age, "mic_ok": self.mic_ok,
+                    "last_bark_ts": self.last_bark_ts, "barks_total": self.barks_total,
+                    "last_event": self.last_event}
+
+
+bark = BarkState()
+
+
+@app.route("/bark", methods=["POST"])
+def post_bark():
+    denied = _require_token()
+    if denied:
+        return denied
+    payload = request.get_json(silent=True) or {}
+    event = payload.get("event")
+    if event not in BarkState.VALID:
+        return jsonify({"ok": False, "error": "missing/invalid 'event'"}), 400
+    accepted = bark.apply(event)
+    # [OPT-14] study log: raw bark times and the quiet events that earned a treat.
+    if event == "bark":
+        events.log("bark",
+                   duration_s=_opt_float(payload, "duration_s", 0.0, 30.0, ndigits=2),
+                   peak_db=_opt_float(payload, "peak_db", -120.0, 6.0, ndigits=1))
+    elif event == "quiet":
+        events.log("bark_quiet", barks=int(_opt_float(payload, "barks", 0, 1000) or 0), accepted=accepted)
+    else:
+        events.log("mic_status", ok=(event == "mic_ok"))
+    return jsonify({"ok": True, "accepted": accepted})
+
+
+@app.route("/api/bark")
+def api_bark():
+    return jsonify(bark.snapshot())          # read-only, public like /api/detection
+
+
 @app.route("/api/detection")
 def api_detection():
     # Read-only, public (like /api/state): the page's YOLO detection panel.
@@ -825,7 +907,10 @@ def get_command():
     if denied:
         return "UNAUTHORIZED", 401, {"Content-Type": "text/plain"}
     z = command.current()
-    return (z if z else "NONE"), 200, {"Content-Type": "text/plain"}
+    b = bark.snapshot()
+    return (z if z else "NONE"), 200, {"Content-Type": "text/plain",
+                                      "X-CANIS-Quiet-Seq": str(b["quiet_seq"]),
+                                      "X-CANIS-Quiet-Age": str(b["quiet_age_s"])}
 
 
 # ---------------------------------------------------------------------------

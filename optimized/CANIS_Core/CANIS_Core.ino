@@ -191,7 +191,11 @@ unsigned long lastRewardMs = 0;
 unsigned long lastPoll = 0;
 bool visionActive = false;
 char visionZone[24] = "";
-unsigned long lastVisionRefresh = 0;   // [OPT-9] last successful /command poll that saw the dog
+unsigned long lastVisionRefresh = 0;
+#if CANIS_BARK_REWARD_ENABLED
+unsigned long quietSeq = 0;          // last X-CANIS-Quiet-Seq value handled
+bool          quietSeqSynced = false; // false until the first poll after boot sets the baseline
+#endif   // [OPT-9] last successful /command poll that saw the dog
 
 // ---------- Movement sub-behavior ----------
 char          moveCmd[12]    = "";
@@ -1675,8 +1679,28 @@ void pollCommand(unsigned long now) {
   HTTPClient http;
   http.begin(url);
   http.setTimeout(CANIS_HTTP_TIMEOUT_MS);
+#if CANIS_BARK_REWARD_ENABLED
+  static const char* hdrKeys[] = { "X-CANIS-Quiet-Seq", "X-CANIS-Quiet-Age" };
+  http.collectHeaders(hdrKeys, 2);
+#endif
   int code = http.GET();
   if (code == 200) {
+#if CANIS_BARK_REWARD_ENABLED
+    // "He went quiet after barking" arrives as a counter in a response header (the body format is unchanged).
+    // The first value after boot is only a baseline, a value that is not newer is ignored, and an event older
+    // than BARK_MAX_AGE_S is never rewarded (a delayed poll must not fire a stale treat).
+    if (http.hasHeader("X-CANIS-Quiet-Seq")) {
+      unsigned long seq = strtoul(http.header("X-CANIS-Quiet-Seq").c_str(), nullptr, 10);
+      float age = http.hasHeader("X-CANIS-Quiet-Age") ? http.header("X-CANIS-Quiet-Age").toFloat() : -1.0f;
+      if (!quietSeqSynced) {
+        quietSeq = seq; quietSeqSynced = true;
+      } else if (seq > quietSeq) {
+        quietSeq = seq;
+        if (age >= 0.0f && age <= (float)CANIS_BARK_MAX_AGE_S) reward("quiet after barking");
+        else Serial.printf("  [BARK] quiet event ignored (age %.1f s)\n", age);
+      }
+    }
+#endif
     String body = http.getString();
     body.trim();
     bool wasActive = visionActive;
