@@ -654,7 +654,9 @@ void readSensors(unsigned long now) {
 
 float readDistanceCm(int trig, int echo) {
   digitalWrite(trig, LOW);  delayMicroseconds(2);
-  digitalWrite(trig, HIGH); delayMicroseconds(10);
+  // 20 us, not 10: the SR04M-2 datasheet says the trigger must be "greater than 10 us", and exactly 10 only
+  // fires it intermittently. HC-SR04s accept longer pulses fine.
+  digitalWrite(trig, HIGH); delayMicroseconds(20);
   digitalWrite(trig, LOW);
   unsigned long dur = pulseIn(echo, HIGH, CANIS_ECHO_TIMEOUT_US);
   if (dur == 0) return -1.0;
