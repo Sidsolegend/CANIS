@@ -41,6 +41,10 @@
 // WiFi reconnect watchdog (new): how often loop() re-checks the link and, if
 // dropped, kicks a non-blocking WiFi.reconnect().
 #define CANIS_WIFI_CHECK_MS        5000UL
+// Minimum gap between WiFi.reconnect() kicks. Joining can take 20+ s on a weak signal; re-kicking every
+// CHECK_MS (5 s) restarts the attempt before it can finish and the link never comes up (seen on the bench
+// 2026-10). Must be >= CHECK_MS.
+#define CANIS_WIFI_RETRY_MS        30000UL
 
 // Vision-detection local TTL [OPT-9] (NEW): visionActive is a latch that is
 // normally cleared by a successful /command poll returning "NONE". If WiFi or
@@ -278,6 +282,9 @@
 #endif
 #if CANIS_VISION_TTL_MS <= 2 * CANIS_POLL_MS
 #error "VISION_TTL_MS must exceed 2x POLL_MS or one missed poll flaps the vision latch"
+#endif
+#if CANIS_WIFI_RETRY_MS < CANIS_WIFI_CHECK_MS
+#error "WIFI_RETRY_MS must be >= WIFI_CHECK_MS"
 #endif
 
 // --- Mobile / CBF block guards (NEW) ---

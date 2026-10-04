@@ -392,8 +392,15 @@ void wifiWatchdog(unsigned long now) {
   if (now - lastWifiCheck < CANIS_WIFI_CHECK_MS) return;
   lastWifiCheck = now;
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("  [NET] WiFi down -> reconnect()");
-    WiFi.reconnect();     // returns immediately; status flips when it succeeds
+    // status codes: 1 NO_SSID_AVAIL (AP not seen), 4 CONNECT_FAILED (auth/assoc), 5 CONNECTION_LOST, 6 DISCONNECTED
+    static unsigned long lastKick = 0;
+    if (lastKick == 0 || now - lastKick >= CANIS_WIFI_RETRY_MS) {
+      lastKick = now;
+      Serial.printf("  [NET] WiFi down (status=%d) -> reconnect()\n", (int)WiFi.status());
+      WiFi.reconnect();   // returns immediately; status flips when it succeeds
+    } else {
+      Serial.printf("  [NET] WiFi still down (status=%d), waiting for the join to finish\n", (int)WiFi.status());
+    }
     configPosted = false; // [C1] re-announce live config once the link is back
   }
 }
