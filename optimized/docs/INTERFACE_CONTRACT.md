@@ -283,11 +283,6 @@ live via `/config` (`mobile_enabled`) and `/ingest` (`mobile`).
 
 ---
 
-*Any field, verb, endpoint, unit, or sign convention not listed here is out of
-contract. Add it here first.*
-
----
-
 ## 5. Bark contract: "treat when he stops barking" (Pi audio detector -> dashboard -> ESP32)
 
 Added 2026-10. A separate Pi process, `audio/detect_bark.py`, listens to a Bluetooth microphone, decides with
@@ -312,3 +307,8 @@ The first `Quiet-Seq` seen after boot is only a **baseline**. A later, larger va
 calls `reward("quiet after barking")`, which keeps its normal cooldown, daily cap, jam handling and observe-only
 suppression. A larger value with an older age is ignored. Disable with `CANIS_BARK_REWARD_ENABLED 0` (do this
 during the study's baseline week so that no contingency is active).
+
+---
+
+*Any field, verb, endpoint, unit, or sign convention not listed here is out of
+contract. Add it here first.*
