@@ -343,3 +343,53 @@ def trimmed_angle(base, offset):
     if a > SERVO_MAX_DEG:
         return SERVO_MAX_DEG
     return a
+
+
+# --------------------------------------------------------------------------- #
+# Ultrasonic lock-up handling (mirrors CANIS_Core.ino readSensors()/serviceRoam())
+# --------------------------------------------------------------------------- #
+# Values from canis_config.h (CANIS_US_HUNG_RUNS, CANIS_US_FAULT_RETRY_MS, CANIS_ROAM_CLEAR_CM).
+US_HUNG = -2.0            # readDistanceCm(): ECHO stuck HIGH. Distinct from -1.0 = "no echo".
+US_HUNG_RUNS = 5
+US_FAULT_RETRY_MS = 10000
+ROAM_CLEAR_CM = 35.0
+
+
+class UltrasonicChannel:
+    """One sensor's lock-up state. A hung HC-SR04 reads as 'no data' but must NOT be mistaken for
+    'path clear': after US_HUNG_RUNS consecutive stuck reads it is FAULTED, parked, and re-tried
+    every US_FAULT_RETRY_MS."""
+
+    def __init__(self):
+        self.fault = False
+        self.hung_runs = 0
+        self.fault_since = 0
+
+    def poll(self, now_ms, read_fn):
+        """read_fn() -> cm (> 0), -1.0 (no echo) or US_HUNG. Returns the value the rest of the firmware sees."""
+        if self.fault and now_ms - self.fault_since < US_FAULT_RETRY_MS:
+            return -1.0                      # parked: do not even read it
+        d = read_fn()
+        if d == US_HUNG:
+            self.hung_runs = min(self.hung_runs + 1, 255)
+            if self.hung_runs >= US_HUNG_RUNS:
+                self.fault = True
+                self.fault_since = now_ms
+            return -1.0
+        self.fault = False                   # any non-stuck read means it answered: recovered
+        self.hung_runs = 0
+        return d
+
+
+def roam_decision(left, centre, right, faults=(False, False, False)):
+    """Mirror of serviceRoam()'s obstacle step. left/centre/right are cm (-1 = no echo = clear);
+    faults = (L, C, R) hung flags. A hung sensor counts as BLOCKED. Returns 'FORWARD', 'LEFT' or 'RIGHT'."""
+    fl, fc, fr = faults
+    c_blocked = fc or (centre > 0 and centre <= ROAM_CLEAR_CM)
+    l_blocked = fl or (left > 0 and left <= ROAM_CLEAR_CM)
+    r_blocked = fr or (right > 0 and right <= ROAM_CLEAR_CM)
+    if not (c_blocked or l_blocked or r_blocked):
+        return "FORWARD"
+    l_room = 0.0 if fl else (1e9 if left < 0 else left)
+    r_room = 0.0 if fr else (1e9 if right < 0 else right)
+    return "LEFT" if l_room >= r_room else "RIGHT"

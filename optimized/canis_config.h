@@ -71,6 +71,14 @@
 // Ultrasonic trigger pulse width. 10 us is the HC-SR04 standard. The SR04M-2 datasheet says "> 10 us"; 20 did NOT help it
 // on the bench (2026-10) and RIGHT stopped answering around the time it was tried, so it is back to 10.
 #define CANIS_TRIG_PULSE_US        10
+// Ultrasonic lock-up handling. An HC-SR04 can hang with its ECHO line stuck HIGH after the ESP32 resets mid-measurement
+// (seen on the bench, 2026-10). A valid echo pulse is <= ~40 ms, so ECHO still HIGH after HUNG_WAIT_US before a trigger means
+// the sensor is stuck. After HUNG_RUNS consecutive stuck reads it is marked FAULTED: it reads as no data, the roam logic treats
+// it as BLOCKED (never drives on blind), and it is re-tried every FAULT_RETRY_MS. A stuck sensor only truly recovers when its
+// power is cycled; software alone cannot cut it.
+#define CANIS_US_HUNG_WAIT_US      50000UL
+#define CANIS_US_HUNG_RUNS         5
+#define CANIS_US_FAULT_RETRY_MS    10000UL
 #define CANIS_NUM_US               3        // sensor count; array order is LEFT, CENTRE, RIGHT, so 2 would drop RIGHT
 // 1 = the SR04M-2 (CENTRE, forward) is wired and read (default). 0 = it is NOT wired and the
 // firmware skips it (no floating-echo phantom readings; self-test says SKIPPED).

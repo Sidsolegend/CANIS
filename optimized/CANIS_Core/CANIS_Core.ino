@@ -168,6 +168,10 @@ struct Confirmed {
 Confirmed pir;
 Confirmed usZone[3];
 float     usCm[3] = { -1, -1, -1 };
+#define CANIS_US_HUNG (-2.0f)            // readDistanceCm(): ECHO stuck HIGH (sensor hung); distinct from -1 = no echo
+bool          usFault[3]      = { false, false, false };   // true = sensor hung; reads as no data, roam treats it as BLOCKED
+uint8_t       usHungRuns[3]   = { 0, 0, 0 };               // consecutive stuck reads
+unsigned long usFaultSince[3] = { 0, 0, 0 };               // when the current wait before a retry began
 bool      zoneActive = false;
 bool      detectionActive = false;
 
@@ -523,8 +527,10 @@ void handleInput() {
       Serial.print("  [SENSORS] cm:");
       for (int i = 0; i < NUM_US; i++) {
         Serial.print("  "); Serial.print(US_DIR[i]); Serial.print("=");
-        if (usCm[i] > 0) Serial.print(usCm[i], 1); else Serial.print("none");
+        if (usFault[i]) Serial.print("HUNG");
+        else if (usCm[i] > 0) Serial.print(usCm[i], 1); else Serial.print("none");
         Serial.print(usZone[i].state ? "(IN ZONE)" : "");
+        if (usEnabled(i) && digitalRead(US_ECHO[i]) == HIGH) Serial.print("[echo HIGH]");
       }
       Serial.print("   zone limit="); Serial.print((float)CANIS_ZONE_CM, 0); Serial.print(" cm");
       if (WiFi.status() == WL_CONNECTED) { Serial.print("   WiFi OK "); Serial.print(WiFi.RSSI()); Serial.println(" dBm"); }
@@ -701,7 +707,28 @@ void readSensors(unsigned long now) {
 
   bool anyZone = false;
   for (int i = 0; i < NUM_US; i++) {
-    float dist = usEnabled(i) ? readDistanceCm(US_TRIG[i], US_ECHO[i]) : -1.0f;
+    float dist = -1.0f;
+    if (!usEnabled(i)) {
+      // skipped by config
+    } else if (usFault[i] && now - usFaultSince[i] < CANIS_US_FAULT_RETRY_MS) {
+      // faulted: parked until the next retry, so a dead sensor does not slow every cycle
+    } else {
+      dist = readDistanceCm(US_TRIG[i], US_ECHO[i]);
+      if (dist == CANIS_US_HUNG) {
+        dist = -1.0f;
+        if (usHungRuns[i] < 255) usHungRuns[i]++;
+        if (usHungRuns[i] >= CANIS_US_HUNG_RUNS) {
+          if (!usFault[i])
+            Serial.printf("  [SENSOR] %s is HUNG (echo stuck high): treated as BLOCKED. Power-cycle the robot to free it.\n", US_DIR[i]);
+          usFault[i] = true;
+          usFaultSince[i] = now;            // wait before the next retry
+        }
+      } else {
+        if (usFault[i]) Serial.printf("  [SENSOR] %s recovered\n", US_DIR[i]);
+        usFault[i] = false;
+        usHungRuns[i] = 0;
+      }
+    }
     usCm[i] = dist;
     bool inZoneRaw = (dist > 0 && dist <= CANIS_ZONE_CM);
     if (usZone[i].update(inZoneRaw))
@@ -714,6 +741,12 @@ void readSensors(unsigned long now) {
 }
 
 float readDistanceCm(int trig, int echo) {
+  // ECHO idles LOW and a valid pulse is <= ~40 ms. Still HIGH after HUNG_WAIT_US: the sensor is stuck.
+  if (digitalRead(echo) == HIGH) {
+    unsigned long w = micros();
+    while (digitalRead(echo) == HIGH && micros() - w < CANIS_US_HUNG_WAIT_US) { }
+    if (digitalRead(echo) == HIGH) return CANIS_US_HUNG;
+  }
   digitalWrite(trig, LOW);  delayMicroseconds(2);
   digitalWrite(trig, HIGH); delayMicroseconds(CANIS_TRIG_PULSE_US);
   digitalWrite(trig, LOW);
@@ -1304,15 +1337,16 @@ void serviceRoam(unsigned long now) {
   if (moveCmd[0]) return;                       // current leg still running
 
   float l = usCm[0], c = usCm[1], r = usCm[2];  // LEFT, CENTRE, RIGHT (-1 = clear)
-  bool cBlocked = (c > 0 && c <= CANIS_ROAM_CLEAR_CM);
-  bool lBlocked = (l > 0 && l <= CANIS_ROAM_CLEAR_CM);
-  bool rBlocked = (r > 0 && r <= CANIS_ROAM_CLEAR_CM);
+  // A hung sensor is a blind spot, not "clear": count it as BLOCKED so the robot never drives on blind.
+  bool cBlocked = usFault[1] || (c > 0 && c <= CANIS_ROAM_CLEAR_CM);
+  bool lBlocked = usFault[0] || (l > 0 && l <= CANIS_ROAM_CLEAR_CM);
+  bool rBlocked = usFault[2] || (r > 0 && r <= CANIS_ROAM_CLEAR_CM);
 
   if (!cBlocked && !lBlocked && !rBlocked) {
     startMotion("FORWARD", CANIS_ROAM_FWD_MS, now);
   } else {
-    float lroom = (l < 0) ? 1e9f : l;           // no echo == lots of room
-    float rroom = (r < 0) ? 1e9f : r;
+    float lroom = usFault[0] ? 0.0f : ((l < 0) ? 1e9f : l);   // no echo == lots of room; a hung side == none
+    float rroom = usFault[2] ? 0.0f : ((r < 0) ? 1e9f : r);
     startMotion(lroom >= rroom ? "LEFT" : "RIGHT", CANIS_ROAM_TURN_MS, now);
   }
   motionPhase = 0;
