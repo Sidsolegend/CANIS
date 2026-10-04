@@ -61,6 +61,9 @@
 #define CANIS_ZONE_CM              30.0f    // "in the forbidden zone" if closer than this
 #define CANIS_WARMUP_MS            60000UL  // ignore PIR for the first 60 s
 #define CANIS_ECHO_TIMEOUT_US      12000UL  // ~2 m cap; the close-range zone needs no more
+// Ultrasonic trigger pulse width. 10 us is the HC-SR04 standard. The SR04M-2 datasheet says "> 10 us"; 20 did NOT help it
+// on the bench (2026-10) and RIGHT stopped answering around the time it was tried, so it is back to 10.
+#define CANIS_TRIG_PULSE_US        10
 #define CANIS_NUM_US               3        // sensor count; array order is LEFT, CENTRE, RIGHT, so 2 would drop RIGHT
 // 1 = the SR04M-2 (CENTRE, forward) is wired and read (default). 0 = it is NOT wired and the
 // firmware skips it (no floating-echo phantom readings; self-test says SKIPPED).
