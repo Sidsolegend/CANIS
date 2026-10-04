@@ -11,3 +11,7 @@ __pycache__/
 
 # Slicer export artifacts
 result.json
+
+# Bench artifacts that embed the real WiFi credentials: never commit
+optimized/CANIS_Core/build/
+optimized/CANIS_Core/CameraWebServer/
