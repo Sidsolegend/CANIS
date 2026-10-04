@@ -50,8 +50,8 @@ RATE = 16000
 FRAME_SAMPLES = int(RATE * B.FRAME_S)
 FRAME_BYTES = FRAME_SAMPLES * 2
 STALL_S = 3.0              # no audio for this long -> mic lost
-DEAD_S = 6.0               # digital silence this long -> mic lost (a muted/off transmitter sends zeros)
-DEAD_DB = -85.0
+DEAD_S = 2.0               # digital silence this long -> mic lost (a muted/off transmitter sends zeros); MUST stay < QUIET_S
+DEAD_DB = B.DEAD_DB
 
 
 # --------------------------------------------------------------------------- #
@@ -173,6 +173,7 @@ class Capture:
 def run(args):
     poster = Poster(args.dashboard, args.token, args.dry_run)
     det = B.BarkDetector(rise_db=args.rise_db, quiet_s=args.quiet_s)
+    assert DEAD_S < args.quiet_s, "DEAD_S must be shorter than the quiet time"
     mic_state = None            # "ok" / "lost" / None (never reported)
     t0 = time.time()
     last_bt_try = 0.0

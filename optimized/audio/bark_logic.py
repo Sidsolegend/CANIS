@@ -11,8 +11,8 @@ Fed one loudness value per 50 ms frame (dBFS), it decides:
 Design points that matter for the dog:
   * Anything loud, even if it is not bark-shaped (a long howl, a loud TV), resets the quiet clock, so a
     treat is never dropped while there is still a racket.
-  * The caller MUST call reset_episode() whenever the microphone is lost. Silence from a dead mic is not
-    a quiet dog, and must never produce a "quiet" event.
+  * The caller MUST call reset_episode() whenever the microphone is lost, and digital silence (<= DEAD_DB) is
+    never counted as quiet. Silence from a dead mic is not a quiet dog and must never produce a "quiet" event.
   * The default rise (35 dB over the floor) was set from ONE recording made close to the mic, where
     barks peaked ~55 dB over the floor and talking/footsteps ~25 dB. It is a starting point, not a
     tuned value: re-check it against more recordings.
@@ -24,6 +24,7 @@ import statistics
 
 FRAME_S = 0.05                 # one loudness value per 50 ms
 DB_MIN = -90.0                 # digital silence is clamped here so it cannot drag the floor to -inf
+DEAD_DB = -85.0                # at or below this the stream is DIGITAL SILENCE (a real room is never this quiet)
 
 # Defaults (mirrored for the Python side in dashboard/canis_config.py: BARK_QUIET_S)
 RISE_DB = 35.0                 # a frame this far above the noise floor starts a burst
@@ -65,7 +66,11 @@ class BarkDetector:
         db = max(db, DB_MIN)
         events = []
 
+        dead = db <= DEAD_DB       # a muted / switched-off / dead mic streams digital silence
+
         if self.floor is None:                         # listen first, decide later
+            if dead:
+                return events                          # never learn the room from a dead stream
             self._init.append(db)
             if len(self._init) >= FLOOR_INIT_FRAMES:
                 self.floor = statistics.median(self._init)
@@ -93,6 +98,12 @@ class BarkDetector:
                     self.episode_barks += 1
                     events.append(("bark", self._last_above, dur, self._peak))
                 # else: a click or a long noise — loud (the quiet clock already restarted) but not a bark
+
+        if dead:
+            # NOT a quiet dog: digital silence restarts the quiet clock (so no treat), and never teaches the floor.
+            # (The burst logic above has already closed any bark that ended, so that bark is still reported.)
+            self.last_loud = t
+            return events
 
         # the noise floor follows the room, but never while something is loud
         if not self.in_burst and (self.last_loud is None or t - self.last_loud > 1.0):

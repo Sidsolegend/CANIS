@@ -122,3 +122,23 @@ def test_a_slowly_rising_room_does_not_trigger_barks():
 def test_no_decisions_while_it_is_still_listening_for_the_floor():
     ev, _ = run(B.BarkDetector(), [(BARK, 0.5)])               # loud before the floor is known
     assert ev == []
+
+
+def test_digital_silence_after_a_bark_is_never_quiet():
+    # a dead / switched-off transmitter streaming zeros must NOT earn a treat, however long it lasts
+    ev, _ = run(B.BarkDetector(), [(ROOM, 3), (BARK, 0.5), (-180.0, 60)])
+    assert kinds(ev) == ["bark"]
+
+
+def test_quiet_is_counted_from_when_real_audio_returns():
+    det = B.BarkDetector(quiet_s=5.0)
+    ev, t = run(det, [(ROOM, 3), (BARK, 0.5), (-180.0, 4)])           # mic dead for 4 s right after the bark
+    assert kinds(ev) == ["bark"]
+    ev2, _ = run(det, [(ROOM, 8)], t0=t)                              # live audio again
+    assert kinds(ev2) == ["quiet"]
+    assert ev2[0][1] - t >= 4.9                                       # a full 5 s of REAL quiet, not the dead time
+
+
+def test_the_mic_lost_timeout_is_shorter_than_the_quiet_time():
+    import detect_bark as D
+    assert D.DEAD_S < B.QUIET_S
