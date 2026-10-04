@@ -229,6 +229,7 @@ unsigned long exposureArmedAt  = 0;
 
 // ---------- WiFi reconnect watchdog [OPT-5] ----------
 unsigned long lastWifiCheck = 0;
+unsigned long postBackoffUntil = 0;   // shared HTTP backoff; declared up here because the mobile code (pollMotion, postTelemetry) uses it before reportToPi() is defined
 
 // ---------- Boot config announce [C1] ----------
 // Latches true after the ESP32 has POSTed its live tunables to /config; the
@@ -1541,7 +1542,6 @@ void logStatus(unsigned long now) {
 }
 
 // ---------- Push state to the Pi ----------
-unsigned long postBackoffUntil = 0;
 
 void reportToPi(unsigned long now) {
   if (moveCmd[0]) return;   // [OPT-10] never block HTTP while feeding the motion watchdog
