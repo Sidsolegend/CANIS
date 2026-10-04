@@ -285,3 +285,30 @@ live via `/config` (`mobile_enabled`) and `/ingest` (`mobile`).
 
 *Any field, verb, endpoint, unit, or sign convention not listed here is out of
 contract. Add it here first.*
+
+---
+
+## 5. Bark contract: "treat when he stops barking" (Pi audio detector -> dashboard -> ESP32)
+
+Added 2026-10. A separate Pi process, `audio/detect_bark.py`, listens to a Bluetooth microphone, decides with
+`audio/bark_logic.py` when Shifu has barked and when he has then been quiet for `CANIS_BARK_QUIET_S` seconds,
+and reports to the dashboard. The robot never moves because of this: it only triggers the existing `reward()`.
+
+### 5.1 Pi detector -> dashboard: `POST /bark`  (token-gated like `/detect`)
+Body: `{"event": "bark" | "quiet" | "mic_lost" | "mic_ok", ...}`.
+- `bark`: optional `duration_s`, `peak_db` (logged for the study as event `bark`).
+- `quiet`: optional `barks` (count in the episode). Logged as `bark_quiet`. **Refused (`accepted:false`) while the
+  mic is marked lost**: silence from a dead microphone is not a quiet dog.
+- `mic_lost` / `mic_ok`: the detector reports a missing stream (no audio for 3 s, or digital silence for 6 s).
+- Anything else -> 400. `GET /api/bark` (public, read-only) returns the current state.
+
+### 5.2 Dashboard -> ESP32: two extra response HEADERS on `GET /command` (body unchanged)
+- `X-CANIS-Quiet-Seq: <int>`: epoch-seconds counter, strictly increasing, `0` until the first accepted quiet.
+- `X-CANIS-Quiet-Age: <float>`: seconds since that quiet event, `-1` if none.
+Old firmware ignores unknown headers, so this is backward compatible.
+
+### 5.3 ESP32 rule (LAW)
+The first `Quiet-Seq` seen after boot is only a **baseline**. A later, larger value with `0 <= Age <= CANIS_BARK_MAX_AGE_S`
+calls `reward("quiet after barking")`, which keeps its normal cooldown, daily cap, jam handling and observe-only
+suppression. A larger value with an older age is ignored. Disable with `CANIS_BARK_REWARD_ENABLED 0` (do this
+during the study's baseline week so that no contingency is active).
