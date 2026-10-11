@@ -1,5 +1,7 @@
 # CANIS - Assembly & Test Plan (metal-chassis build)
 
+> **Note:** parts of this document were written before the October 2026 rebuild. Since then the PIR motion sensor was removed (the camera covers presence), the front sensor became a JSN-SR04M-2 ultrasonic, and the drive moved to N20 encoder motors. [BUILD_STORY.md](BUILD_STORY.md) lists what changed, and [KNOWN_ISSUES.md](KNOWN_ISSUES.md) has the current state.
+
 Everything to build CANIS on the metal chassis + the parts you already printed,
 wire it, flash it, and test it - in order. Only the **Pi power bank** is
 deferred (see the last section); everything else, including the motors, you can

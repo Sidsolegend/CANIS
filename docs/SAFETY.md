@@ -1,5 +1,7 @@
 # CANIS - Safety & Fail-Safe Reference
 
+> **Note:** parts of this document were written before the October 2026 rebuild. Since then the PIR motion sensor was removed (the camera covers presence), the front sensor became a JSN-SR04M-2 ultrasonic, and the drive moved to N20 encoder motors. [BUILD_STORY.md](BUILD_STORY.md) lists what changed, and [KNOWN_ISSUES.md](KNOWN_ISSUES.md) has the current state.
+
 Every fail-safe in the system, enumerated: what triggers it, what it does, and
 how to test it. The design intent throughout: **any single failure must leave
 the robot stopped and quiet near the dog.** Shifu is afraid of moving objects;

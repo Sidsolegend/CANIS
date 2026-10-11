@@ -1,5 +1,7 @@
 # CANIS - Stationary Robot Integration (full wiring, one pass)
 
+> **Note:** parts of this document were written before the October 2026 rebuild. Since then the PIR motion sensor was removed (the camera covers presence), the front sensor became a JSN-SR04M-2 ultrasonic, and the drive moved to N20 encoder motors. [BUILD_STORY.md](BUILD_STORY.md) lists what changed, and [KNOWN_ISSUES.md](KNOWN_ISSUES.md) has the current state.
+
 > Warning: **This is a PLAN, not a status report.** The unchecked boxes below are the
 > intended sequence - they are **not** kept in sync with what is actually built,
 > so do not read an unticked box as "not done" or a ticked one as current.

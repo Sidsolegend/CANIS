@@ -1,5 +1,7 @@
 # CANIS — Technical Writeup
 
+> **Note:** parts of this document were written before the October 2026 rebuild. Since then the PIR motion sensor was removed (the camera covers presence), the front sensor became a JSN-SR04M-2 ultrasonic, and the drive moved to N20 encoder motors. [BUILD_STORY.md](BUILD_STORY.md) lists what changed, and [KNOWN_ISSUES.md](KNOWN_ISSUES.md) has the current state.
+
 CANIS is an autonomous, treat-dispensing behaviour robot for a single dog. This
 document describes the system as built: the three-processor architecture, the
 real-time control loop, the perception and state-machine stack, the actuation and
