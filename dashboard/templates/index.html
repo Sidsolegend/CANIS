@@ -46,6 +46,42 @@
     .stat .v { font-size: 26px; font-weight: 700; }
     .stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; margin-top: 2px; }
     footer { text-align: center; color: var(--muted); font-size: 11px; margin-top: 18px; }
+    footer a { color: var(--muted); }
+    .fault {
+      display: none; background: #3d1114; border: 1px solid var(--correction);
+      color: var(--correction); border-radius: 10px; padding: 10px 14px;
+      margin-top: 14px; font-size: 13px; font-weight: 600; text-align: center;
+    }
+    .fault.on { display: block; }
+
+    /* Session control + firmware config [C1][C4] */
+    .section-title { font-size: 12px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 1px; margin: 18px 0 8px; }
+    .session { background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+      padding: 14px; transition: border-color .3s; }
+    .session.armed { border-color: var(--arousal); }
+    .session .row { display: flex; justify-content: space-between; align-items: center;
+      gap: 8px; flex-wrap: wrap; }
+    .session .lv { font-size: 13px; color: var(--muted); }
+    .session .lv b { color: var(--text); }
+    .arm-btns { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+    button.cbtn { background: #0a0d12; color: var(--text); border: 1px solid var(--line);
+      border-radius: 8px; padding: 8px 12px; font-size: 13px; cursor: pointer; }
+    button.cbtn:hover { border-color: var(--muted); }
+    button.cbtn.sel { border-color: var(--arousal); color: var(--arousal); }
+    button.cbtn.confirm { border-color: var(--calm); color: var(--calm); }
+    button.cbtn.confirm:disabled { opacity: .4; cursor: default;
+      border-color: var(--line); color: var(--muted); }
+    button.cbtn.danger { border-color: var(--correction); color: var(--correction); }
+    .session .armmsg { font-size: 12px; color: var(--muted); margin-top: 8px; min-height: 14px; }
+    details.cfg { margin-top: 4px; font-size: 12px; color: var(--muted); }
+    details.cfg summary { cursor: pointer; }
+    details.cfg table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    details.cfg td { padding: 2px 6px; border-bottom: 1px solid var(--line); }
+    details.cfg td:last-child { text-align: right; color: var(--text);
+      font-variant-numeric: tabular-nums; }
+    .cfg-src { color: var(--arousal); font-size: 11px; }
+    .cfg-src.firmware { color: var(--calm); }
   </style>
 </head>
 <body>
@@ -56,21 +92,51 @@
     </header>
 
     <div id="stateCard" class="state-card state-CALM">
-      <div id="stateName" class="state-name">—</div>
+      <div id="stateName" class="state-name"> - </div>
       <div id="stateSub" class="state-sub">awaiting data</div>
     </div>
 
-    <div class="bar-label"><span>AROUSAL</span><span id="arousalVal">—</span></div>
+    <div class="bar-label"><span>AROUSAL</span><span id="arousalVal"> - </span></div>
     <div class="bar"><span id="arousalBar"></span></div>
 
     <div class="grid">
-      <div class="stat"><div id="rewards" class="v">—</div><div class="k">Rewards given</div></div>
-      <div class="stat"><div id="interventions" class="v">—</div><div class="k">Interventions</div></div>
-      <div class="stat"><div id="lastReward" class="v">—</div><div class="k">Last reward</div></div>
-      <div class="stat"><div id="uptime" class="v">—</div><div class="k">Uptime</div></div>
+      <div class="stat"><div id="rewards" class="v"> - </div><div class="k">Rewards given</div></div>
+      <div class="stat"><div id="interventions" class="v"> - </div><div class="k">Interventions</div></div>
+      <div class="stat"><div id="lastReward" class="v"> - </div><div class="k">Last reward</div></div>
+      <div class="stat"><div id="uptime" class="v"> - </div><div class="k">Uptime</div></div>
+      <div class="stat"><div id="exposure" class="v"> - </div><div class="k">Exposure level</div></div>
+      <div class="stat"><div id="jams" class="v"> - </div><div class="k">Dispenser jams</div></div>
     </div>
 
+    <div id="fault" class="fault">Warning: DISPENSER JAM REPORTED - check the hopper, then press 'd' on the ESP32 console</div>
+
+    <div class="section-title">Session control - exposure level [C4]</div>
+    <div id="session" class="session">
+      <div class="row">
+        <span class="lv">authorized: <b id="authLevel"> - </b> · live (firmware): <b id="liveLevel"> - </b></span>
+        <span id="armState" class="lv">disarmed</span>
+      </div>
+      <div class="arm-btns">
+        <button class="cbtn" data-lvl="0">Arm 0</button>
+        <button class="cbtn" data-lvl="1">Arm 1</button>
+        <button class="cbtn" data-lvl="2">Arm 2</button>
+        <button id="confirmBtn" class="cbtn confirm" disabled>Confirm</button>
+        <button id="disarmBtn" class="cbtn danger">Cancel</button>
+      </div>
+      <div id="armMsg" class="armmsg">two-step: Arm a level, then Confirm within the window</div>
+    </div>
+
+    <div class="section-title">Firmware config [C1] <span id="cfgSrc" class="cfg-src"> - </span></div>
+    <details class="cfg">
+      <summary>tunables the robot is actually running</summary>
+      <table id="cfgTable"><tbody></tbody></table>
+    </details>
+
     <footer id="src">polling /api/state every 1s</footer>
+    <footer>
+      session data: <a href="/export/sessions.csv">sessions.csv</a> ·
+      <a href="/export/events.csv">events.csv</a>
+    </footer>
   </div>
 
   <script>
@@ -99,9 +165,9 @@
         card.className = "state-card state-" + d.state;
         document.getElementById("stateName").textContent = d.state;
         document.getElementById("stateSub").textContent =
-          d.state === "CALM" ? "settled — baseline" :
+          d.state === "CALM" ? "settled - baseline" :
           d.state === "AROUSAL" ? "watching, no intervention" :
-          "intervening — marker + orient";
+          "intervening - marker + orient";
 
         const pct = Math.min(100, 100 * d.arousal / d.arousal_max);
         const bar = document.getElementById("arousalBar");
@@ -113,11 +179,15 @@
         document.getElementById("interventions").textContent = d.intervention_count;
         document.getElementById("lastReward").textContent = ago(d.last_reward_time);
         document.getElementById("uptime").textContent = dur(d.uptime_sec);
+        document.getElementById("exposure").textContent = (d.exposure_level ?? " - ");
+        document.getElementById("liveLevel").textContent = (d.exposure_level ?? " - ");
+        document.getElementById("jams").textContent = (d.jam_count ?? 0);
+        document.getElementById("fault").className = "fault" + ((d.jam_count > 0) ? " on" : "");
 
         conn.className = "conn live";
         conn.textContent = "live";
         document.getElementById("src").textContent =
-          d.source === "esp32" ? "live data — ESP32" : "demo data — simulator (no ESP32 signal)";
+          d.source === "esp32" ? "live data - ESP32" : "demo data - simulator (no ESP32 signal)";
       } catch (e) {
         conn.className = "conn stale";
         conn.textContent = "no signal";
@@ -126,6 +196,90 @@
 
     tick();
     setInterval(tick, 1000);
+
+    // --- Session control + firmware config [C1][C4] ---
+    // Mutating routes require the dashboard token; forward it from the page URL
+    // (?token=...) exactly as the ESP32 does on /command. On a token-less bench
+    // build the routes accept the request anyway.
+    const tokenParam = (() => {
+      const t = new URLSearchParams(location.search).get("token");
+      return t ? ("?token=" + encodeURIComponent(t)) : "";
+    })();
+    let armedLevel = null;
+
+    async function postJSON(path, body) {
+      const r = await fetch(path + tokenParam, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+      });
+      return r.json().catch(() => ({}));
+    }
+
+    function renderSession(s) {
+      document.getElementById("authLevel").textContent = s.authorized_level;
+      const armState = document.getElementById("armState");
+      const card = document.getElementById("session");
+      const confirmBtn = document.getElementById("confirmBtn");
+      document.querySelectorAll(".cbtn[data-lvl]").forEach(b =>
+        b.classList.toggle("sel", s.armed && Number(b.dataset.lvl) === s.armed_level));
+      if (s.armed) {
+        armedLevel = s.armed_level;
+        armState.textContent = "ARMED " + s.armed_level + " · " + s.seconds_left + "s left";
+        card.classList.add("armed");
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = "Confirm " + s.armed_level;
+      } else {
+        armedLevel = null;
+        armState.textContent = "disarmed";
+        card.classList.remove("armed");
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = "Confirm";
+      }
+    }
+
+    async function sessionTick() {
+      try { renderSession(await (await fetch("/api/session", { cache: "no-store" })).json()); }
+      catch (e) {}
+    }
+
+    async function configTick() {
+      try {
+        const r = await (await fetch("/api/config", { cache: "no-store" })).json();
+        const src = document.getElementById("cfgSrc");
+        src.textContent = r.source === "firmware" ? "● firmware truth" : "● fallback (no ESP32)";
+        src.className = "cfg-src" + (r.source === "firmware" ? " firmware" : "");
+        const tb = document.querySelector("#cfgTable tbody");
+        tb.innerHTML = "";
+        Object.entries(r.config).forEach(([k, v]) => {
+          const tr = document.createElement("tr");
+          const kd = document.createElement("td"); kd.textContent = k;
+          const vd = document.createElement("td"); vd.textContent = v;
+          tr.appendChild(kd); tr.appendChild(vd); tb.appendChild(tr);
+        });
+      } catch (e) {}
+    }
+
+    document.querySelectorAll(".cbtn[data-lvl]").forEach(b =>
+      b.addEventListener("click", async () => {
+        const res = await postJSON("/exposure/arm", { level: Number(b.dataset.lvl) });
+        document.getElementById("armMsg").textContent = res.msg || "";
+        if (res.session) renderSession(res.session);
+      }));
+    document.getElementById("confirmBtn").addEventListener("click", async () => {
+      if (armedLevel === null) return;
+      const res = await postJSON("/exposure/confirm", { level: armedLevel });
+      document.getElementById("armMsg").textContent = res.msg || "";
+      if (res.session) renderSession(res.session);
+    });
+    document.getElementById("disarmBtn").addEventListener("click", async () => {
+      const res = await postJSON("/exposure/disarm", {});
+      document.getElementById("armMsg").textContent = res.msg || "";
+      if (res.session) renderSession(res.session);
+    });
+
+    sessionTick(); setInterval(sessionTick, 1000);
+    configTick(); setInterval(configTick, 5000);
   </script>
 </body>
 </html>

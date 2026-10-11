@@ -1,5 +1,5 @@
 // ============================================================================
-//  CANIS — TWO-TIER chassis, enclosure & mounts  (OpenSCAD)  — clean rebuild
+//  CANIS - TWO-TIER chassis, enclosure & mounts  (OpenSCAD) - clean rebuild
 //  Lower deck: Pi 5, L298N, buck, motors, castor, dispenser.
 //  Upper shelf (on 4 standoffs): Arduino, breadboard, ESP32.
 //  Shell: clean dome + paw. Sensors on a SEPARATE plate. No ribs-through-holes,
@@ -18,7 +18,7 @@ deck_l = 205; deck_w = 165; deck_t = 4;     // lower deck (no ribs; 4mm + skirt)
 skirt_h = 8; skirt_t = 3; fillet = 9;
 shelf_l = 195; shelf_w = 165; shelf_t = 3;  // upper shelf
 post_h = 42;                                 // standoff height (clears the Pi)
-// 4 standoffs — verified clear on BOTH tiers:
+// 4 standoffs - verified clear on BOTH tiers:
 POSTS = [[84,74],[84,-74],[-25,74],[-25,-74]];
 
 // ---- components (size_x, size_y, cx, cy, mount) ----
@@ -141,7 +141,7 @@ module chute(){         // flat flange bolts under the deck at the exit; trough 
   difference(){
     union(){
       translate([0,0,-1.5]) rr(flg, pocket_d+12, 3, 3);                  // flange (top face against deck underside)
-      hull(){                                                            // trough body — one smooth taper
+      hull(){                                                            // trough body - one smooth taper
         translate([0,0,-1]) cylinder(d=pocket_d+8,h=eps);
         translate([-46,0,-30]) cylinder(d=pocket_d+8,h=eps);
       }
@@ -186,7 +186,7 @@ module shell(){
     for(s=[-1,1]) translate([axle_x,s*(deck_w/2+shell_clr),0]) rotate([90,0,0]) cylinder(d=wheel_d+10,h=2*wall+6,center=true); // wheel arches
     translate([disp_x,0,body_h]) cylinder(d=hop_top+8,h=head_h,center=true);       // hopper opening (funnel only)
     for(i=[-2:2]) translate([i*8,40,body_h-3]) cube([3.5,40,20],center=true);       // fan grille
-    // CANIS — deep deboss on the rear wall, pushed DOWN clear of the hopper opening
+    // CANIS - deep deboss on the rear wall, pushed DOWN clear of the hopper opening
     translate([-deck_l/2-shell_clr-2,0,9]) rotate([0,3,0]) rotate([90,0,90]) mirror([1,0,0]) linear_extrude(5) text("CANIS",size=13,halign="center",valign="center",font="Liberation Sans:style=Bold");
   }
 }
@@ -197,11 +197,11 @@ module sensor_plate(){
   difference(){
     union(){
       rr(60,(paw_cam-paw_pir)+34,4,2.6);
-      // camera standoffs (top) — solid; far from the PIR
+      // camera standoffs (top) - solid; far from the PIR
       for(sx=[-1,1],sy=[-1,1]) translate([sx*cam_hx/2,paw_cam+sy*cam_hy/2,0]) difference(){ cylinder(d=5,h=6); translate([0,0,-eps]) cylinder(d=1.6,h=8);}
       // ultrasonic: 2 short locating nubs at the board's L/R edges (no full frame)
       for(s=[-1,1]) translate([s*(us_pitch/2+us_eye_d/2+2),paw_us,0]) cylinder(d=4,h=5);
-      // PIR ring (bottom) — solid; far from the camera/ultrasonic
+      // PIR ring (bottom) - solid; far from the camera/ultrasonic
       translate([0,paw_pir,0]) difference(){ cylinder(d=pir_d+6,h=6); translate([0,0,-eps]) cylinder(d=pir_d+0.6,h=8);}
     }
     // sensor business-end clearance holes through the plate
@@ -255,14 +255,25 @@ module layout(){
 }
 
 // every printable part laid flat on one plate -> a single combined STL to split
+// Each part is Z-normalized to its own local z_min so it sits flush on z=0 in the
+// combined file (parts have non-zero local Z origins; unioning with XY-only
+// translation would leave several shells floating/sunken in a slicer). Z offsets
+// derive from each module's lowest geometry:
+//   deck  z_min=-(skirt_h-deck_t)=-4   shell z_min=-skirt_drop=-16
+//   chute z_min=-30 (trough taper)     lid   z_min=-5 (underside plug)
+//   shelf/dispenser/disc/castor/sensor_plate z_min=0 (already flush)
+// XY slots are kept as the original EXCEPT the chute, nudged +35mm in X (380->415):
+// flattening its downward trough onto the bed brings it into the disc's footprint
+// (they only cleared in the original because the trough hung 18-30mm below the
+// disc). +35mm gives ~6.5mm clearance and stays within the existing plate envelope.
 module all_parts(){
-  deck();
+  translate([0,0,skirt_h-deck_t]) deck();
   translate([265,0,0]) shelf();
-  translate([0,225,0]) shell();
+  translate([0,225,skirt_drop]) shell();
   translate([255,210,0]) dispenser();
   translate([330,210,0]) disc();
-  translate([380,210,0]) chute();
-  translate([255,300,0]) lid();
+  translate([415,210,30]) chute();
+  translate([255,300,5]) lid();
   translate([330,300,0]) castor();
   translate([400,300,0]) sensor_plate();
 }

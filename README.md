@@ -1,172 +1,149 @@
 # CANIS
 
-[](https://github.com/Sidsolegend/CANIS/actions/workflows/tests.yml)
+[![tests](https://github.com/Sidsolegend/CANIS/actions/workflows/tests.yml/badge.svg)](https://github.com/Sidsolegend/CANIS/actions/workflows/tests.yml)
 
-**A welfare-first conditioning robot for a fearful dog.**
-CANIS rewards my Goldendoodle, Shifu, for *leaving* forbidden zones — it never
-punishes him for entering them. Raspberry Pi 5 vision (YOLO) + ESP32 arousal
-state machine + Arduino real-time executor, wrapped in fail-safes designed
-around one hard constraint: **Shifu is afraid of moving objects**, so robot
-motion is a rationed hazard introduced over weeks, not a free actuator.
+A small robot that gives my dog treats for calm behaviour.
 
-> **Working on this repo?** Start at [`optimized/RESUME_HERE.md`](optimized/RESUME_HERE.md)
-> — current state, next actions, and what not to read. The `optimized/` tree
-> holds the real sources; root-level firmware/vision folders are stale duplicates.
+![CANIS as it runs today](docs/images/06-final-robot.jpg)
 
----
+*The current robot: a Meccano frame, an ESP32 and an Arduino on a breadboard, an ESP32-CAM on top, and three ultrasonic sensors at the front.*
 
-## Why this exists
+## Why I built it
 
-Consistent, precisely-timed reinforcement is the thing owners are worst at and
-machines are best at. But the obvious design — a robot that "corrects" by
-approaching the dog — would be actively harmful to a movement-fearful animal.
-CANIS inverts it:
+My Goldendoodle, Shifu, is afraid of moving objects. He also barks for attention, and he gets into trouble when he is bored. A robot is the worst possible thing to put in front of a dog like that, so the design starts from that constraint. CANIS never punishes him and never drives towards him. It rewards him when he settles, when he leaves a spot he shouldn't be in, or when he stops barking. Any motion is something I introduce slowly and switch off by default.
 
-1. **Reward leaving, never punish entering.** The salient events in the dog's
-   world stay appetitive (a marker tone that predicts food), not threatening.
-2. **Motion is gated, not assumed.** A single explicit `EXPOSURE_LEVEL`
-   (0 = never move · 1 = pivot only, never approach · 2 = brief gentle
-   approach) sits between "the robot decided" and "the robot moves". It boots
-   at 0, rises one step at a time, and only on logged evidence that the dog is
-   comfortable.
-3. **The longitudinal record is the point.** The graded-exposure process
-   produces a session-by-session fear-response dataset for one real dog —
-   protocol in [`optimized/study/STUDY_PROTOCOL.md`](optimized/study/STUDY_PROTOCOL.md)
-   (n = 1, honestly scoped: no efficacy claims).
+## What it does
+
+- **Three modes.** `PLACE` (the default) gives a treat when Shifu settles on his mat. `GUARD` stays at a spot, gives a short buzzer cue when he comes near, and rewards him for leaving. `PLAY` wanders the room, gives a treat when it sees him, then backs away so he can follow. It never moves towards him.
+- **Dog detection.** A YOLO11n model on a Raspberry Pi 5 finds the dog in the camera image and estimates his bearing and distance. The camera is either the Pi's own or an ESP32-CAM streaming over WiFi.
+- **Bark detection.** A DJI Mic 3 connects to the Pi over Bluetooth. After a bark, the robot waits for five seconds of quiet and then drops a treat. A dead or muted microphone is treated as "not quiet", so a failure never rewards the wrong thing.
+- **Treat dispenser.** A servo-driven gate on an Arduino Uno, with a short tone before each treat so the sound predicts food. There is a cooldown between treats and a daily cap.
+- **Dashboard.** A Flask app on the Pi shows live state, keeps an event log and exports CSV files for the study.
+- **Safety layer.** The Arduino stops the motors if it hasn't heard from the ESP32 for one second, so a crashed program or a loose wire ends with a stopped robot. A single exposure setting decides how much motion is allowed at all. It starts at zero.
+- **Closed-loop drive (not enabled).** The motors have encoders and the code includes a per-wheel controller and a control-barrier-function safety filter. It is switched off in the config and has not been run on the robot yet.
+
+## How it was built
+
+| | |
+|---|---|
+| ![Prototype chassis](docs/images/01-prototype-chassis-angle.jpg) | **1. Prototype.** The first rolling version: a Meccano frame, a Raspberry Pi 5, and geared motors with large wheels. It proved the vision and treat loop before I committed to a design. |
+| ![CAD v1](docs/images/02-cad-v1-parts.png) | **2. CAD, version 1.** A fully printable two-tier enclosure, modelled in OpenSCAD for a Bambu P1S. |
+| ![CAD v2](docs/images/03-cad-v2-assembly.png) | **3. CAD, version 2.** A flap-gate dispenser and a shell that closes around the boards. |
+| ![CAD v3](docs/images/04-cad-v3-assembly.png) | **4. CAD, version 3.** A reshaped shell, which I never finished as a full set of parts. |
+| ![CAD v4](docs/images/05-cad-v4-assembly.png) | **5. CAD, version 4.** The last printable design, with the deck and shell checked for slicing. |
+| ![Final robot](docs/images/06-final-robot.jpg) | **6. What I actually run.** I stopped printing the shell and went back to the metal frame. The dispenser housing is the main printed part. The old motors were replaced with small N20 encoder motors, and the front sensor, ESP32-CAM and bark detection were added. |
+
+The longer story, including what went wrong, is in [docs/BUILD_STORY.md](docs/BUILD_STORY.md).
 
 ## Architecture
 
-```
- Pi 5 (eyes+face)          ESP32 (brain)                Arduino Uno (limbs)
- YOLO vision  ─┐      ┌─ PIR + 3× ultrasonic       ┌─ motion watchdog (1 s)
- Flask dash ───┼─WiFi─┤  arousal integrator   UART ┤  L298N + motors
- event log ────┘      └─ CALM/AROUSAL/CORRECTION ──┘  servo gate + marker
-                          EXPOSURE gate               beam-break jam sensor
-```
-
-Three tiers, matched to strengths and isolated as failure domains: the Uno is
-a deliberately dumb real-time executor whose **motion watchdog stops the motors
-within ~1 s of command silence** — so a crashed brain, a loose wire, or a WiFi
-storm all converge on a *stopped* robot. The ESP32 runs a rate-driven arousal
-integrator (+30/s during confirmed detection, −12/s decay) through a
-hysteresis state machine; dropping back to CALM is what earns the treat. The
-Pi does what MCUs can't: YOLO dog detection, the live dashboard, and the
-append-only study log.
-
-Full diagrams (system, state machine, dispense sequence, data flow):
-[`optimized/docs/ARCHITECTURE.md`](optimized/docs/ARCHITECTURE.md).
-
-## Safety mechanisms
-
-| Mechanism | Trigger | Response |
-|---|---|---|
-| Motion watchdog (Arduino) | 1 s without a fresh command | motors stop — needs nothing else alive |
-| Exposure gate | every correction cycle | no/limited motion; **boots at level 0** |
-| Never-approach invariant | `FORWARD` bearing below level 2 | rewritten to an in-place pivot |
-| Immediate STOP on disengage | leaving CORRECTION | halt now, don't wait for the watchdog |
-| Watch-only AROUSAL state | arousal 20–70 | observe, never act |
-| Confirmation filter + warm-up | raw sensor blips / PIR warm-up | 3-consecutive-read hysteresis; boot mask |
-| dt clamp + vision-latch TTL | loop stalls / dead Pi mid-detection | no phantom CORRECTION, ever |
-| Reward cooldown + session cap | < 20 s gap or > 30/session | treat held (over-feeding & hopper safety) |
-| Jam detection + fault | beam-break sees no drop (×2) | dispenser goes **silent** — no marker without a treat |
-| Dashboard auth + validation | unauthenticated LAN request | 401; all inputs bounded |
-
-Every row has a written test procedure: [`optimized/docs/SAFETY.md`](optimized/docs/SAFETY.md).
-
-## Repository map
-
-```
-CANIS_Core/              ESP32 integrated brain (original)
-Treat_Dispenser_CANIS/   Arduino executor: dispenser + motors (original)
-State_Machine_*/         reference sketches (offline / WiFi state machine)
-Sensors_Test/  WiFi_*/   bring-up & diagnostic sketches
-dashboard/               Flask dashboard (original)
-vision/                  stale duplicate — see optimized/vision/ (YOLO)
-hardware/                WIRING.md · TESTING.md · OpenSCAD CAD + STLs
-paper/                   systems-paper draft (honest n=1 framing)
-optimized/               ★ hardened duplicates + full docs — start here
-├── canis_config.h / dashboard/canis_config.py   single-source tunables (+ parity test)
-├── CANIS_Core/ · Treat_Dispenser_CANIS/ · vision/ · dashboard/   [OPT-1..14]
-├── tests/               88 pure-logic tests (pytest, no hardware needed)
-├── study/               STUDY_PROTOCOL.md · analyze_sessions.py
-├── docs/                ARCHITECTURE.md · SAFETY.md
-├── reviews/             engineering/admissions reviews · roadmap · risks
-└── OPTIMIZATIONS.md     every change, file:line-referenced
+```mermaid
+flowchart LR
+    subgraph Pi["Raspberry Pi 5 (eyes, ears, dashboard)"]
+        V["YOLO dog detection"]
+        B["Bark detector (DJI Mic 3)"]
+        D["Flask dashboard and event log"]
+    end
+    subgraph ESP["ESP32 (brain)"]
+        S["Ultrasonic sensors"]
+        M["State machine and reward policy"]
+    end
+    subgraph UNO["Arduino Uno (limbs)"]
+        W["1 s motion watchdog"]
+        MOT["L298N and motors"]
+        G["Servo gate and buzzer"]
+    end
+    V --> D
+    B --> D
+    D <-- WiFi --> M
+    S --> M
+    M -- serial --> UNO
 ```
 
-**What `optimized/` is:** after the original build worked end-to-end, I went
-back through every file myself and ran a deliberate review-and-hardening pass
-— with AI tooling assisting the search-and-fix loop — looking for exactly the
-kind of bugs that hide in state machines and safety-critical code (the stale
-vision latch, the level-1 forward-drive bug, config values that had drifted
-between the `.ino` files and the dashboard). Every change is file:line-referenced
-in [`optimized/OPTIMIZATIONS.md`](optimized/OPTIMIZATIONS.md), and the findings
-that motivated them are in
-[`optimized/reviews/ENGINEERING_REVIEW.md`](optimized/reviews/ENGINEERING_REVIEW.md).
-I decided what to fix and why; the tooling sped up the search, not the
-judgment. `optimized/` is that hardened, fully-documented result — the
-original folders stay as-built and unmodified so the before/after is honest
-and checkable.
+Each processor does one kind of job, and each one fails on its own. The Uno is deliberately simple. It runs the motors and the gate and stops the wheels when commands stop arriving. The ESP32 reads the sensors and decides what to do. The Pi does the heavy work (vision, audio, logging). More in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/TECHNICAL_OVERVIEW.md](docs/TECHNICAL_OVERVIEW.md).
 
-## Quick start
+## Hardware
 
-**Dashboard (Pi):**
+| Part | Used for |
+|---|---|
+| Raspberry Pi 5 | vision, bark detection, dashboard |
+| ESP32 DevKit V1 | sensors, state machine, WiFi |
+| Arduino Uno | dispenser, motors, buzzer |
+| ESP32-CAM (AI-Thinker, OV2640) | camera on the robot |
+| L298N driver, 2 x GA12-N20 150 rpm encoder motors, 43 mm wheels | drive |
+| 2 x HC-SR04 and 1 x JSN-SR04M-2 | left, right and front distance |
+| SG90 servo, small buzzer | treat gate and the marker tone |
+| DJI Mic 3 | bark detection, over Bluetooth |
+| 6 x AA pack for the motors, a small USB power bank for the electronics | power |
+| Meccano frame, printed dispenser housing, castor | chassis |
+
+Wiring, pin tables and power notes: [hardware/WIRING.md](hardware/WIRING.md). Bring-up tests: [hardware/TESTING.md](hardware/TESTING.md). Encoder bring-up: [hardware/ENCODER_BRINGUP.md](hardware/ENCODER_BRINGUP.md).
+
+## Repository layout
+
+```
+CANIS_Core/              ESP32 firmware (brain)
+Treat_Dispenser_CANIS/   Arduino firmware (dispenser, motors, buzzer)
+canis_config.h           every tunable value for the firmware, in one place
+vision/                  YOLO dog detection (Pi)
+audio/                   bark detection (Pi)
+dashboard/               Flask dashboard and event log (Pi)
+control/                 closed-loop controller and safety filter (not enabled)
+study/                   study protocol and the analysis script
+tests/                   118 tests, no hardware needed
+hardware/                wiring, bring-up guides, CAD, STL files
+docs/                    architecture, safety, interfaces, build story, known issues
+paper/                   systems paper draft
+crest/                   write-up prepared for a CREST Gold Award submission
+prototypes/              early test sketches from before the current firmware
+```
+
+## Running it
+
+Run the tests (no hardware needed):
+
 ```bash
-cd optimized/dashboard
-pip3 install -r requirements.txt
-export CANIS_TOKEN=$(openssl rand -hex 16)   # shared secret; see the .service file
-python3 app.py                                # dev; waitress unit for real use
+pip install pytest -r dashboard/requirements.txt
+python3 -m pytest tests/ -q
 ```
-Open `http://<pi-ip>:5000`. With no ESP32 it shows a clearly-labeled simulator.
 
-**Firmware (ESP32 + Uno):** copy `arduino_secrets.h.example` into
-`optimized/CANIS_Core/` as `arduino_secrets.h` (gitignored) and fill in WiFi,
-Pi IP, and the same token. Flash `optimized/CANIS_Core` (board: *esp32 by
-Espressif*, monitor 115200) and `optimized/Treat_Dispenser_CANIS` (9600).
-Bring-up order & pass criteria: [`hardware/TESTING.md`](hardware/TESTING.md);
-pinout & power: [`hardware/WIRING.md`](hardware/WIRING.md).
+Run the dashboard on the Pi:
 
-**Vision (Pi):** [`vision/SETUP.md`](vision/SETUP.md), then
-`python3 optimized/vision/detect_yolo.py --zone kitchen` (ArUco `detect.py` is
-kept only as a fallback).
-
-**Tests (any machine, no hardware):**
 ```bash
-python3 -m pytest optimized/tests/    # 88 tests: state machine, safety
-                                      # invariants, config parity, event log
+cd dashboard
+pip install -r requirements.txt
+export CANIS_TOKEN=$(openssl rand -hex 16)   # shared secret, also set in arduino_secrets.h
+python3 app.py                                # listens on port 5000
 ```
 
-**Study tooling:**
+Flash the firmware: copy `CANIS_Core/arduino_secrets.h.example` to `CANIS_Core/arduino_secrets.h` and fill in your WiFi details, the Pi's address and the token. That file is git-ignored. Then flash `CANIS_Core` to the ESP32 (115200 baud) and `Treat_Dispenser_CANIS` to the Uno (9600 baud).
+
+Start vision and bark detection on the Pi. Setup commands are at the top of each file.
+
 ```bash
-python3 optimized/study/analyze_sessions.py --generate-example ex.jsonl   # SYNTHETIC demo
-# real data: download /export/sessions.csv from the dashboard
+python3 vision/detect_yolo.py --zone kitchen
+python3 audio/detect_bark.py --bt-mac <microphone address>
 ```
 
-## Status (as of 2026-07-19)
+## Status
 
-The **full stationary loop has been proven end-to-end** (camera -> YOLO ->
-dashboard -> ESP32 -> treat drops, 2026-07-13). Software is complete and the
-88-test suite passes on both the Mac and the Pi. Remaining build work is
-finishing the sensor wiring on the metal chassis; the printed shell was
-abandoned in favour of the existing Meccano chassis. Mobility (encoder motors +
-the CBF safe-motion controller) is written but flag-gated off until baseline
-data exists.
+What has been run:
+- The full loop, camera to detection to dashboard to ESP32 to treat, works on the bench.
+- The bark loop works end to end: a bark, five seconds of quiet, then a treat. In the live test there were no false positives.
+- With a test build that boots straight into `PLAY`, the robot roams on the floor with the battery pack and power bank running everything, no laptop attached. The two motors do not run at the same speed yet, so it drifts. That is what the encoders are for.
+- 118 automated tests pass.
 
-The behavioral study has **not** started. Its protocol is written but is **not
-yet committed**, so it is not pre-registered — that commit has to land, dated,
-before the first real session for the n=1 design to mean anything.
+What has not:
+- The encoders are wired but their counts per turn have not been measured.
+- The closed-loop drive and safety filter have never run on the robot.
+- The behaviour study has not started. There are no results, and I make no claim that the robot changes Shifu's behaviour. The protocol is in [study/STUDY_PROTOCOL.md](study/STUDY_PROTOCOL.md). It is one dog, one home, one owner.
 
-Working state, next actions, and gotchas:
-[`optimized/RESUME_HERE.md`](optimized/RESUME_HERE.md).
+Known problems and limits are listed in [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
 
-## Honesty & ethics
+## About the code
 
-One dog, one home, owner-run. The paper draft
-([`paper/canis_paper_draft.md`](paper/canis_paper_draft.md)) claims a
-*system design*, not a behavioral outcome; the study protocol pre-declares its
-limitations and hard welfare stop-criteria (any distress ends the session, and
-repeated distress lowers the exposure level — the dog outranks the data).
+I built and wired the robot, ran the bench tests and decided how it should behave around Shifu. AI coding assistants helped write and review parts of the software and the documentation.
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+MIT. See [LICENSE](LICENSE).
