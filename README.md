@@ -103,7 +103,7 @@ prototypes/              early test sketches from before the current firmware
 Run the tests (no hardware needed):
 
 ```bash
-pip install pytest -r dashboard/requirements.txt
+pip install pytest numpy -r dashboard/requirements.txt
 python3 -m pytest tests/ -q
 ```
 
