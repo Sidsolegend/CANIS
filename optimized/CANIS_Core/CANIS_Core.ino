@@ -116,9 +116,8 @@ const int   PI_PORT   = CANIS_PI_PORT;
 const char* CANIS_TOKEN = SECRET_CANIS_TOKEN;
 
 // ---------- Sensor pins ----------
-const int PIR_PIN  = -1;   // [bench 2026-09] PIR REMOVED (redundant with the camera); GPIO 27 (the
-                           // old PIR pin) now carries left-encoder B. -1 = no PIR, reads as "clear".
-const int   US_TRIG[3] = { 32, 26, 14 };          // LEFT, CENTRE, RIGHT
+const int PIR_PIN  = -1;   // [bench 2026-09] PIR REMOVED (redundant with the camera); -1 = no PIR, reads as "clear".
+const int   US_TRIG[3] = { 32, 27, 14 };          // LEFT, CENTRE, RIGHT   [bench 2026-10-11] CENTRE trig is on 27 (as wired); 26 is reserved for left-encoder B
 const int   US_ECHO[3] = { 34, 25, 35 };          // LEFT, CENTRE, RIGHT
 const char* US_DIR[3]  = { "LEFT", "FORWARD", "RIGHT" };
 const int   NUM_US = CANIS_NUM_US;

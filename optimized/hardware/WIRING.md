@@ -82,8 +82,8 @@ exception: on its own bank and WiFi-only, it needs no shared ground.)*
 
 | GPIO | Use | Dir | Note |
 |------|-----|-----|------|
-| 27 | PIR `OUT` | IN (pulldown) | reads LOW if PIR unplugged → no phantom motion |
-| 26 | Ultrasonic **CENTRE** `TRIG` | OUT | original sensor |
+| (27) | PIR `OUT` (removed) | — | the PIR is gone; GPIO 27 now carries the CENTRE ultrasonic `TRIG` (row below) |
+| 27 | Ultrasonic **CENTRE** `TRIG` | OUT | **as-built 2026-10-11** (the original pin 26 is now the left encoder's channel B) |
 | 25 | Ultrasonic **CENTRE** `ECHO` | IN | **via 1 kΩ series resistor** (5 V→3.3 V) |
 | 32 | Ultrasonic **LEFT** `TRIG` | OUT | |
 | 34 | Ultrasonic **LEFT** `ECHO` | IN (input-only) | **via 1 kΩ series resistor** |
@@ -266,7 +266,7 @@ The 1 kΩ in series with the ESP32's internal clamp diode limits current to
 ```
 ESP32 ──(GPIO13 → pin10, +GND)── Arduino ──(L298N)── motor windings
   │                                  │
-  ├─ PIR (27), ultrasonic (26/25,    ├─ servo (9), buzzer (6), button (2)
+  ├─ ultrasonic (27/25,    ├─ servo (9), buzzer (6), button (2)
   │   32/34, 14/35), buzzer (33)     └─ L298N 3/4/7/8/12/5, powered by USB
   │
   ├─ MOBILE: encoders L 18/19, R 16/17 (PCNT, 3V3)

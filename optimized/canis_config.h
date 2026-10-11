@@ -235,18 +235,18 @@
 
 // Quadrature encoder inputs (ESP32 PCNT peripheral — counts in hardware, zero
 // CPU cost; this is WHY the encoders land on the ESP32 and not the Uno).
-// Pin budget: 27 (PIR), 13 (Serial2 link TX), 32/34, 26/25, 14/35 (ultrasonics)
+// Pin budget: 13 (Serial2 link TX), 32/34, 27/25, 14/35 (ultrasonics: LEFT, CENTRE, RIGHT; CENTRE trig moved 26->27 on 2026-10-11)
 // are taken; 21/22 are RESERVED for I2C (IMU + VL53LX ToF).
 // [bench 2026-09] The ESP32 sits on a breadboard that covers every hole beside
 // the 16-19 / 3V3 side, so the encoders are REMAPPED to pins reachable on the
 // other side: 33 (freed — the ESP32 correction buzzer is unwired, BUZZER_PIN=-1
 // in CANIS_Core.ino), 36/39 (input-only, no internal pull-ups — the encoder
-// boards must drive their outputs themselves) and 27 (the old PIR pin — the PIR
-// was removed, PIR_PIN=-1 in CANIS_Core.ino). Avoid GPIO 12: it is a BOOT
+// boards must drive their outputs themselves) and 26 (the old CENTRE trigger pin,
+// freed on 2026-10-11 when the CENTRE trigger wire was left on 27). Avoid GPIO 12: it is a BOOT
 // STRAPPING pin and a HIGH on it at reset can stop the ESP32 booting.
 // (Original WROOM defaults were 18/19 left, 16/17 right.)
 #define CANIS_ENC_L_A_PIN          33       // left encoder channel A
-#define CANIS_ENC_L_B_PIN          27       // left encoder channel B (quadrature -> signed counts)
+#define CANIS_ENC_L_B_PIN          26       // left encoder channel B (quadrature -> signed counts)
 #define CANIS_ENC_R_A_PIN          36       // right encoder channel A (input-only)
 #define CANIS_ENC_R_B_PIN          39       // right encoder channel B (input-only)
 

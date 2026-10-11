@@ -18,10 +18,12 @@ The mobile phase stays **off** (`CANIS_MOBILE_ENABLED 0`, `canis_config.h:234`).
 
 ## 1. The wiring table  `[code]` `canis_config.h:248-251`
 
+Left C2 is on **D26**, not D27 (changed 2026-10-11): the CENTRE ultrasonic's trigger wire stays on D27 (`CANIS_Core.ino:120`).
+
 | Encoder wire | LEFT motor goes to | RIGHT motor goes to |
 |---|---|---|
 | **C1** (channel A) | ESP32 **D33** | ESP32 **VP** |
-| **C2** (channel B) | ESP32 **D27** | ESP32 **VN** |
+| **C2** (channel B) | ESP32 **D26** | ESP32 **VN** |
 | **VCC** | Arduino **3V3** pin | Arduino **3V3** pin |
 | **GND** | ground rail | ground rail |
 
@@ -73,7 +75,7 @@ Meter on DC volts: **VCC to GND at the encoder should read about 3.3 V.**
    - **Numbers jump around with the wheel still:** noise; move the encoder wires away from the motor wires.
 
 ### Step 6 — the LEFT encoder
-Repeat Steps 1 to 5 for the left motor (`L-C1` to D33, `L-C2` to D27). Left forward must make **L climb**.
+Repeat Steps 1 to 5 for the left motor (`L-C1` to D33, `L-C2` to D26). Left forward must make **L climb**.
 
 ### Step 7 — measure counts per wheel turn  (this number matters)
 Press **`z`**. Turn **one wheel exactly 10 full turns** by hand (mark the tyre with tape to count). Read the `/10` value: that is **counts per turn**.
@@ -96,4 +98,4 @@ Flash `CANIS_Core/CANIS_Core.ino` back onto the robot ESP32. Leave the encoders 
 | Count goes the wrong direction | swap that encoder's C1 and C2 |
 | Count drifts with the wheel still | noise: separate from the motor wires; twist the encoder wires together |
 | `levels` on VP/VN never change | encoder unpowered (VCC/GND), or C1/C2 not connected (VP/VN have no internal pull-ups) |
-| ESP32 will not boot with an encoder wired | disconnect it and tell me which pin; D33 and D27 are normal pins, VP/VN are input-only |
+| ESP32 will not boot with an encoder wired | disconnect it and tell me which pin; D33 and D26 are normal pins, VP/VN are input-only |

@@ -24,7 +24,7 @@ flowchart TB
     end
 
     subgraph ESP["ESP32 DevKit V1 — brain"]
-        SENS["PIR (GPIO27)<br/>3× ultrasonic L/C/R<br/>TRIG 32/26/14 · ECHO 34/25/35"]
+        SENS["PIR (removed)<br/>3× ultrasonic L/C/R<br/>TRIG 32/27/14 · ECHO 34/25/35"]
         CONF["confirmation filter<br/>(3 consecutive reads)"]
         FSM["arousal integrator + state machine<br/>CALM / AROUSAL / CORRECTION<br/>hysteresis [OPT-3] · dt clamp [OPT-4]<br/>vision TTL [OPT-9]"]
         GATE["EXPOSURE_LEVEL gate 0/1/2<br/>(welfare knob; level-1 never-approach [OPT-8])"]
