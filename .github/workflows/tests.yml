@@ -1,14 +1,4 @@
-# CANIS — pytest CI workflow
-#
-# What this runs: the pure-logic tests in optimized/tests/ (state machine,
-# vision grace/frozen-frame guards, event log, analyzer, .h<->.py config
-# parity). These are stdlib + Flask + waitress only — no Arduino toolchain,
-# no OpenCV/camera, no hardware — so they run the same on a laptop and on a
-# GitHub-hosted runner. Installed from optimized/ci/github-actions-tests.yml
-# per optimized/ci/README.md; keep the two in sync if either changes.
-#
-# Trigger: every push and every pull request, on any branch.
-name: CANIS tests
+name: tests
 
 on:
   push:
@@ -16,33 +6,16 @@ on:
 
 jobs:
   pytest:
-    name: pytest (optimized/tests)
     runs-on: ubuntu-latest
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Install test dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install pytest
-          # tests/test_analyzer.py and tests/test_config_parity.py import the
-          # dashboard package (app.py, canis_config.py, event_log.py), which
-          # declares its own runtime deps here:
-          pip install -r optimized/dashboard/requirements.txt
-
-      - name: Run pytest
-        run: pytest optimized/tests/ -q
-
-      # Note: optimized/vision/detect.py (OpenCV + camera + ArUco) is NOT
-      # exercised here on purpose. The logic it depends on
-      # (vision/vision_logic.py: DetectionGrace, FrozenFrameGuard) is
-      # deliberately cv2-free and IS covered by tests/test_vision_logic.py.
-      # detect.py itself needs a camera and is validated on-device per
-      # vision/SETUP.md, not in CI.
+          pip install -r dashboard/requirements.txt
+      - name: Run tests
+        run: pytest tests/ -q

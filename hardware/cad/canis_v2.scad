@@ -1,5 +1,5 @@
 // ============================================================================
-//  CANIS — TWO-TIER chassis, enclosure & mounts  (OpenSCAD)  — clean rebuild
+//  CANIS - TWO-TIER chassis, enclosure & mounts  (OpenSCAD) - clean rebuild
 //  Lower deck: Pi 5, L298N, buck, motors, castor, dispenser.
 //  Upper shelf (on 4 standoffs): Arduino, breadboard, ESP32.
 //  Shell: clean dome + paw. Sensors on a SEPARATE plate. No ribs-through-holes,
@@ -18,7 +18,7 @@ deck_l = 205; deck_w = 165; deck_t = 4;     // lower deck (no ribs; 4mm + skirt)
 skirt_h = 8; skirt_t = 3; fillet = 9;
 shelf_l = 195; shelf_w = 165; shelf_t = 3;  // upper shelf
 post_h = 42;                                 // standoff height (clears the Pi)
-// 4 standoffs — verified clear on BOTH tiers:
+// 4 standoffs - verified clear on BOTH tiers:
 POSTS = [[84,74],[84,-74],[-25,74],[-25,-74]];
 
 // ---- components (size_x, size_y, cx, cy, mount) ----
@@ -57,7 +57,7 @@ wheel_d=68; wheel_t=26; axle_x=22; track=deck_w+12;
 castor_x=-deck_l/2+18; castor_bc=24; castor_hole=4.3; castor_spacer_h=9;
 m3=3.3; m3p=2.8;
 
-// ---- power bays (PARAMETRIC placeholders — edit to your exact parts) ----
+// ---- power bays (PARAMETRIC placeholders - edit to your exact parts) ----
 aa_l=58; aa_w=31; aa_h=16; aa_c=[80,0];            // [5] 4xAA motor pack: open-front cradle on the deck (front), long axis fore-aft
 bank_l=100; bank_w=65; bank_h=25; bank_c=[12,0];   // [6] Pi power bank: UNDER the deck (belly), strap-mounted
 lbl_h=0.7;                                          // engrave depth for the numbered labels
@@ -177,14 +177,14 @@ module chute(){         // flat flange bolts under the deck at the gate; trough 
   difference(){
     union(){
       translate([0,0,-1.5]) rr(flg, gate_d+12, 3, 3);                    // flange (top face against deck underside)
-      hull(){                                                            // trough body — one smooth taper
+      hull(){                                                            // trough body - one smooth taper
         translate([0,0,-1]) cylinder(d=gate_d+8,h=eps);
         translate([-46,0,-30]) cylinder(d=gate_d+8,h=eps);
       }
     }
     hull(){                                                              // ONE smooth channel: gate (over flange) -> rear exit
       translate([0,0,4]) cylinder(d=gate_d+3,h=eps);
-      translate([-46,0,-29]) cylinder(d=gate_d+3,h=eps);
+      translate([-46,0,-30-eps]) cylinder(d=gate_d+3,h=eps);            // FIX: reach past body far end so the rear exit actually punches through (was -29 -> left a ~1.9mm capped membrane)
     }
     for(s=[-1,1]) translate([s*chute_mt,0,-4]) cylinder(d=m3,h=6);       // mount holes (match deck)
   }
@@ -227,7 +227,7 @@ module shell(){
     for(s=[-1,1]) translate([axle_x,s*(deck_w/2+shell_clr),0]) rotate([90,0,0]) cylinder(d=wheel_d+10,h=2*wall+6,center=true); // wheel arches
     translate([disp_x,0,body_h]) cylinder(d=hop_top+8,h=head_h,center=true);       // hopper opening (funnel only)
     for(i=[-2:2]) translate([i*8,40,body_h-3]) cube([3.5,40,20],center=true);       // fan grille
-    // CANIS — deep deboss on the rear wall, pushed DOWN clear of the hopper opening
+    // CANIS - deep deboss on the rear wall, pushed DOWN clear of the hopper opening
     translate([-deck_l/2-shell_clr-2,0,9]) rotate([0,3,0]) rotate([90,0,90]) mirror([1,0,0]) linear_extrude(5) text("CANIS",size=13,halign="center",valign="center",font="Liberation Sans:style=Bold");
   }
 }
@@ -240,11 +240,11 @@ module sensor_plate(){
   difference(){
     union(){
       rr(60,(paw_cam-paw_pir)+34,4,2.6);
-      // camera standoffs (top) — solid; far from the PIR
+      // camera standoffs (top) - solid; far from the PIR
       for(sx=[-1,1],sy=[-1,1]) translate([sx*cam_hx/2,paw_cam+sy*cam_hy/2,0]) difference(){ cylinder(d=5,h=6); translate([0,0,-eps]) cylinder(d=1.6,h=8);}
       // SR04M-2 locating ring (centre)
       translate([0,paw_us,0]) difference(){ cylinder(d=srm_d+6,h=6); translate([0,0,-eps]) cylinder(d=srm_d+0.6,h=8);}
-      // PIR ring (bottom) — solid; far from the camera/ultrasonic
+      // PIR ring (bottom) - solid; far from the camera/ultrasonic
       translate([0,paw_pir,0]) difference(){ cylinder(d=pir_d+6,h=6); translate([0,0,-eps]) cylinder(d=pir_d+0.6,h=8);}
     }
     // sensor business-end clearance holes through the plate

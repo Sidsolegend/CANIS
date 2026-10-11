@@ -1,17 +1,17 @@
-# Secrets — never commit WiFi/Pi credentials
+# Wi-Fi / Pi credentials: never commit
 arduino_secrets.h
+
+# Build output and bench artifacts that embed the real Wi-Fi credentials
+CANIS_Core/build/
+CANIS_Core/CameraWebServer/
 
 # Python
 __pycache__/
 *.pyc
+.pytest_cache/
 
 # macOS
 .DS_Store
 
-
 # Slicer export artifacts
 result.json
-
-# Bench artifacts that embed the real WiFi credentials: never commit
-optimized/CANIS_Core/build/
-optimized/CANIS_Core/CameraWebServer/

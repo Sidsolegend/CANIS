@@ -1,2 +1,0 @@
-Flask>=2.3
-waitress>=2.1   # production WSGI server used by canis-dashboard.service
