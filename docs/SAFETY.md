@@ -9,7 +9,7 @@ a runaway or a stuttering robot is the worst-case failure, so motion is treated
 as a rationed hazard, not a free actuator.
 
 Conventions: "orig" = original tree; `[OPT-n]` = hardening documented in
-`OPTIMIZATIONS.md`. Test procedures assume the bench setup of
+`DESIGN_DECISIONS.md`. Test procedures assume the bench setup of
 `hardware/TESTING.md`; run them with wheels off the ground first, and never
 test failure modes with the dog in the room.
 

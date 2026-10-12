@@ -2,7 +2,7 @@
 
 Written 2026-10-04 for the rebuilt robot. Do it **after** the 6×AA pack and the power bank, with the motor battery **out**
 and the robot propped up (wheels off the ground). Allow roughly an hour the first time (estimate).
-Facts about the code are `` (with `file:line`); facts about the hardware are `` and are reported, not verified here.
+Facts about the code come with a `file:line`; facts about the hardware were observed on the bench and are not verified by the code.
 
 ## 0. What you are doing, in plain words
 
@@ -10,13 +10,13 @@ Each N20 motor has a small circuit board on its back (an **encoder**) that sends
 The ESP32 counts the pulses, so it knows how far and how fast each wheel really turned. The safety layer for Shifu depends on that
 number being right (`docs/SAFE_MOTION_CBF_SPEC.md`), which is why you measure it instead of trusting a datasheet.
 
-Each encoder board is labelled **M1, GND, C1, C2, VCC, M2** ``.
+Each encoder board is labelled **M1, GND, C1, C2, VCC, M2**.
 - **M1 and M2 are the motor.** They are already on the L298N. **Do not touch them.**
 - **VCC, GND, C1, C2 are the encoder.** These four wires per motor are the job.
 
-The mobile phase stays **off** (`CANIS_MOBILE_ENABLED 0`, `canis_config.h:234`). Nothing here turns it on.
+The mobile phase stays **off** (`CANIS_MOBILE_ENABLED 0`, `canis_config.h:233`). Nothing here turns it on.
 
-## 1. The wiring table  `` `canis_config.h:248-251`
+## 1. The wiring table (`canis_config.h:248-251`)
 
 Left C2 is on **D26**, not D27 (changed 2026-10-11): the CENTRE ultrasonic's trigger wire stays on D27 (`CANIS_Core.ino:120`).
 
@@ -79,7 +79,7 @@ Repeat Steps 1 to 5 for the left motor (`L-C1` to D33, `L-C2` to D26). Left forw
 
 ### Step 7 - measure counts per wheel turn  (this number matters)
 Press **`z`**. Turn **one wheel exactly 10 full turns** by hand (mark the tyre with tape to count). Read the `/10` value: that is **counts per turn**.
-Do it for both wheels; they should agree closely. The current config value `CANIS_ENC_COUNTS_PER_REV 1320` (`canis_config.h:256`) assumes an 11-pulse motor with a 30:1 gearbox;
+Do it for both wheels; they should agree closely. The current config value `CANIS_ENC_COUNTS_PER_REV 1320` (`canis_config.h:255`) assumes an 11-pulse motor with a 30:1 gearbox;
 your motors are 7-pulse (`docs/MOBILE_UPGRADE_STATUS.md:65`) with an unknown gear ratio, so expect a different number. Write your measured value on a piece of paper;
 **do not change the config until we have checked it together** (the safety layer trusts it directly).
 
@@ -88,7 +88,7 @@ Flash `CANIS_Core/CANIS_Core.ino` back onto the robot ESP32. Leave the encoders 
 
 ## 4. Not now (so nobody does it by accident)
 - Do **not** set `CANIS_MOBILE_ENABLED 1`. The mobile phase waits for baseline study data and for `hardware/MOBILE_BRINGUP.md`.
-- Before mobile mode: set `CANIS_WHEEL_DIAMETER_MM` to 43 and `CANIS_WHEEL_BASE_MM` to 165 (`canis_config.h:258-259`, currently 65 and 140), and enter the measured counts per turn.
+- Before mobile mode: set `CANIS_WHEEL_DIAMETER_MM` to 43 and `CANIS_WHEEL_BASE_MM` to 165 (`canis_config.h:257-258`, currently 65 and 140), and enter the measured counts per turn.
 - The mobile firmware **did not compile** before 2026-10-04 (a variable was used before it was declared). That is fixed: both builds compile, but the mobile code has **not been run** on hardware.
 
 ## 5. Quick fixes

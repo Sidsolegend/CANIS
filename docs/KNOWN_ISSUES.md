@@ -4,7 +4,7 @@ Last updated 11 October 2026. This is what I know is wrong or unfinished, groupe
 
 ## Welfare
 
-- **Motion can frighten a dog who is afraid of moving objects.** Shifu is exactly that dog. The mitigations are in code: the robot never drives towards him (`CANIS_NEVER_APPROACH`, `canis_config.h:171`), mobile drive is off (`CANIS_MOBILE_ENABLED 0`, line 234), and I supervise every run. They reduce the risk. They do not remove it.
+- **Motion can frighten a dog who is afraid of moving objects.** Shifu is exactly that dog. The mitigations are in code: the robot never drives towards him (`CANIS_NEVER_APPROACH`, `canis_config.h:170`), mobile drive is off (`CANIS_MOBILE_ENABLED 0`, line 233), and I supervise every run. They reduce the risk. They do not remove it.
 - **`PLAY` may over-excite him.** A robot that backs away from a dog can read as a chase. Watching for excitement, as well as fear, is on me.
 - **The marker tone without a treat would weaken the conditioning.** The firmware goes silent when a treat jams or the hopper is empty, but the jam sensor is not installed, so a jam is not actually detected yet.
 - **The `GUARD` buzzer cue could itself be unpleasant to him.** It is a short, mild tone. If I see a fear response to it, the cue gets redesigned.
@@ -12,7 +12,7 @@ Last updated 11 October 2026. This is what I know is wrong or unfinished, groupe
 ## Drive and power
 
 - **The two motors run at different speeds.** The left one is stiffer, and with no feedback the robot drifts and keeps turning. The encoders are wired but I have not measured their counts per turn.
-- **The encoder and wheel settings still describe the old robot.** `CANIS_ENC_COUNTS_PER_REV` is 1320 (line 256), which assumes a different motor. `CANIS_WHEEL_DIAMETER_MM` is 65 and `CANIS_WHEEL_BASE_MM` is 140 (lines 258 and 259). The robot has 43 mm wheels and a 165 mm track. These must be corrected before mobile mode is ever enabled.
+- **The encoder and wheel settings still describe the old robot.** `CANIS_ENC_COUNTS_PER_REV` is 1320 (line 255), which assumes a different motor. `CANIS_WHEEL_DIAMETER_MM` is 65 and `CANIS_WHEEL_BASE_MM` is 140 (lines 257 and 258). The robot has 43 mm wheels and a 165 mm track. These must be corrected before mobile mode is ever enabled.
 - **The closed-loop controller and safety filter have never run on the robot.** The code and its tests are written, and the whole path is switched off.
 - **Motor load is unmeasured.** The N20 motors drive a robot of about 2 kg through the L298N, which drops roughly 2 V, from a 6 x AA pack. It rolls on a smooth floor. I have not measured current or checked it on carpet.
 - **No rear sensor.** `PLAY` backs away from the dog without being able to see behind it.
@@ -44,5 +44,5 @@ Last updated 11 October 2026. This is what I know is wrong or unfinished, groupe
 ## Study
 
 - **The study has not started.** There are no results. The protocol is a draft, and it should be committed with a date before the first baseline session so it counts as pre-registration.
-- **The baseline week has to run with the bark reward off** (`CANIS_BARK_REWARD_ENABLED 0`, `canis_config.h:198`). It is currently on.
+- **The baseline week has to run with the bark reward off** (`CANIS_BARK_REWARD_ENABLED 0`, `canis_config.h:197`). It is currently on.
 - **It is one dog in one home with one owner.** Nothing from it generalises.
