@@ -134,7 +134,7 @@ const int   NUM_US = CANIS_NUM_US;
 //   Arduino pin 11 (SoftwareSerial TX) -> ESP32 GPIO 4 (RX2)    [5V->3.3V!!]
 // WARNING: the Arduino->ESP32 direction is 5V into a 3.3V pin. It MUST go
 // through a level shifter or a 2:1 resistor divider (e.g. 1k/2k). See
-// OPTIMIZATIONS.md. If you don't wire the return line, set
+// DESIGN_DECISIONS.md. If you don't wire the return line, set
 // CANIS_USE_DISPENSE_ACK to 0 in canis_config.h and behavior reverts to
 // count-on-send.
 const int ARD_TX_PIN = 13;

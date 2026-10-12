@@ -2,8 +2,8 @@
 
 > **Note:** parts of this document were written before the October 2026 rebuild. Since then the PIR motion sensor was removed (the camera covers presence), the front sensor became a JSN-SR04M-2 ultrasonic, and the drive moved to N20 encoder motors. [BUILD_STORY.md](BUILD_STORY.md) lists what changed, and [KNOWN_ISSUES.md](KNOWN_ISSUES.md) has the current state.
 
-Diagrams for the full system as implemented in ``: the original
-behavior plus the `[OPT-n]` hardening (`OPTIMIZATIONS.md`) and the
+Diagrams for the full system as implemented: the original
+behavior plus the `[OPT-n]` hardening (`DESIGN_DECISIONS.md`) and the
 mobile-drivetrain / YOLO / CBF upgrade (§§5–7 below; `docs/MOBILE_UPGRADE_STATUS.md`).
 §§1–4 describe the system that ships **today** (stationary, `CANIS_MOBILE_ENABLED
 = 0`); §§5–7 describe the mobile/camera upgrade layered on top, inert until the

@@ -1,9 +1,8 @@
-# CANIS - Optimizations
+# CANIS - Design decisions
 
-Optimized **duplicates** of the CANIS sources. Nothing in the original tree was
-modified; every file here is new and lives under ``. Each change is
-cross-referenced to the original `file:line` it addresses and tagged inline in
-the code as `[OPT-n]`.
+The hardening changes made to the first working version of CANIS (the sketches
+in `prototypes/` are that first version). Each change is cross-referenced to the
+original `file:line` it addresses and tagged inline in the code as `[OPT-n]`.
 
 | n | Theme | New / changed files |
 |---|-------|---------------------|

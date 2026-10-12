@@ -19,7 +19,7 @@
   Because a header cannot be imported by Python and a .py cannot be #included by
   C++, two files are unavoidable. To keep them from drifting again, the ESP32
   should POST its live config to the Pi at boot (see the /config note in
-  OPTIMIZATIONS.md) so the dashboard displays exactly what the firmware runs,
+  DESIGN_DECISIONS.md) so the dashboard displays exactly what the firmware runs,
   instead of a hand-copied guess.
 
   Arduino build note: the Arduino toolchain only sees headers inside the sketch

@@ -9,7 +9,7 @@ the simulator read one place.
 A header (.h) and a module (.py) cannot share a literal file, so this mirror is
 unavoidable. The real anti-drift fix is runtime, not source: the ESP32 should
 POST its live config to a /config endpoint at boot, and the dashboard should
-prefer those values (see OPTIMIZATIONS.md). Until then, these MUST match
+prefer those values (see DESIGN_DECISIONS.md). Until then, these MUST match
 canis_config.h - the values below are copied from it verbatim.
 """
 
