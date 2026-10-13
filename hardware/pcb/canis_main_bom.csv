@@ -1,46 +1,42 @@
 Qty,Value,Footprint,Refs
-1,LEFT ENCODER 3V3 GND A B,PinHeader_1x04_P2.54mm_Vertical,ENC_L
-6,1k,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,R1 R3 R4 R_US_C R_US_L R_US_R
-1,ESP32 DevKit left header (EN..VIN),PinSocket_1x15_P2.54mm_Vertical,J1
-1,100n motor R,C_Disc_D3.0mm_W2.0mm_P2.50mm,C5
-4,10k,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,RP_ENC_LA RP_ENC_LB RP_ENC_RA RP_ENC_RB
-1,1N5819 5V->VIN,D_DO-41_SOD81_P3.81mm_Vertical_CathodeUp,D3
-1,BUTTON D2 GND,PinHeader_1x02_P2.54mm_Vertical,J_BTN
-1,L298N Multiwatt15,TO-220-15_P2.54x5.08mm_StaggerOdd_Lead4.58mm_Vertical,U3
-1,LEFT HC-SR04 5V TRIG ECHO GND,PinHeader_1x04_P2.54mm_Vertical,US_L
-2,22p,C_Disc_D3.0mm_W2.0mm_P2.50mm,C6 C7
-1,470u 25V,CP_Radial_D10.0mm_P5.00mm,C1
-1,1N5822 buck,D_DO-201AD_P5.08mm_Vertical_CathodeUp,D2
-1,green 5V,LED_D3.0mm,LED1
-8,1N5819,D_DO-41_SOD81_P3.81mm_Vertical_CathodeUp,D10 D11 D4 D5 D6 D7 D8 D9
-1,220,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,R6
-1,LEFT MOTOR,"TerminalBlock_Phoenix_MKDS-1,5-2-5.08_1x02_P5.08mm_Horizontal",M1
+1,ICSP,PinHeader_2x03_P2.54mm_Vertical,J5
 1,100n VCC,C_Disc_D3.0mm_W2.0mm_P2.50mm,C8
-1,UART (FTDI/CP2102) GND DTR TXD RXD,PinHeader_1x04_P2.54mm_Vertical,J4
-1,2.2k,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,R5
-1,CENTRE SR04M-2 5V TRIG ECHO GND,PinHeader_1x04_P2.54mm_Vertical,US_C
-1,100n,C_Disc_D3.0mm_W2.0mm_P2.50mm,C3
-1,RIGHT MOTOR,"TerminalBlock_Phoenix_MKDS-1,5-2-5.08_1x02_P5.08mm_Horizontal",M2
+1,100n DTR,C_Disc_D3.0mm_W2.0mm_P2.50mm,C10
+1,1N5822 buck,D_DO-201AD_P5.08mm_Vertical_CathodeUp,D2
+1,100n AREF,C_Disc_D3.0mm_W2.0mm_P2.50mm,C9
+6,1k,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,R1 R3 R4 R_US_C R_US_L R_US_R
+1,TO L298N module: ENA IN1 IN2 IN3 IN4 ENB,PinHeader_1x06_P2.54mm_Vertical,J_DRV
+1,ATmega328P-PU (Uno bootloader),DIP-28_W7.62mm_Socket,U1
+1,LM2596T-5.0,TO-220-5_Vertical,U2
+1,ESP32-CAM 5V GND,PinHeader_1x02_P2.54mm_Vertical,J_CAM
+4,10k,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,RP_ENC_LA RP_ENC_LB RP_ENC_RA RP_ENC_RB
+1,BUTTON D2 GND,PinHeader_1x02_P2.54mm_Vertical,J_BTN
+1,220,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,R6
+1,1N5819 5V->VIN,D_DO-41_SOD81_P3.81mm_Vertical_CathodeUp,D3
+1,LEFT ENCODER 3V3 GND A B,PinHeader_1x04_P2.54mm_Vertical,ENC_L
+2,22p,C_Disc_D3.0mm_W2.0mm_P2.50mm,C6 C7
+1,1N5822 reverse protect,D_DO-201AD_P5.08mm_Vertical_CathodeUp,D1
 1,RIGHT ENCODER 3V3 GND A B,PinHeader_1x04_P2.54mm_Vertical,ENC_R
-1,ESP32 DevKit right header (D23..3V3),PinSocket_1x15_P2.54mm_Vertical,J2
-1,SERVO GND 5V SIG,PinHeader_1x03_P2.54mm_Vertical,J_SERVO
-1,I2C 3V3 GND SDA SCL,PinHeader_1x04_P2.54mm_Vertical,J_I2C
-1,220u servo,CP_Radial_D6.3mm_P2.50mm,C11
+1,470u 25V,CP_Radial_D10.0mm_P5.00mm,C1
+1,100n,C_Disc_D3.0mm_W2.0mm_P2.50mm,C3
+1,33uH 3A,L_Radial_D10.0mm_P5.00mm_Fastron_07P,L1
+1,UART (FTDI/CP2102) GND DTR TXD RXD,PinHeader_1x04_P2.54mm_Vertical,J4
 1,470u 16V (5V out),CP_Radial_D8.0mm_P3.50mm,C2
 1,BATT 6xAA,"TerminalBlock_Phoenix_MKDS-1,5-2-5.08_1x02_P5.08mm_Horizontal",J3
-1,amber D13,LED_D3.0mm,LED2
-1,BEAM 5V GND OUT,PinHeader_1x03_P2.54mm_Vertical,J_BEAM
-1,LM2596T-5.0,TO-220-5_Vertical,U2
-1,1N5822 reverse protect,D_DO-201AD_P5.08mm_Vertical_CathodeUp,D1
-1,100n AREF,C_Disc_D3.0mm_W2.0mm_P2.50mm,C9
 1,10k reset,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,R2
-1,100n DTR,C_Disc_D3.0mm_W2.0mm_P2.50mm,C10
-1,RESET,SW_PUSH_6mm,SW1
-1,100n motor L,C_Disc_D3.0mm_W2.0mm_P2.50mm,C4
-1,RIGHT HC-SR04 5V TRIG ECHO GND,PinHeader_1x04_P2.54mm_Vertical,US_R
+1,green 5V,LED_D3.0mm,LED1
+1,BEAM 5V GND OUT,PinHeader_1x03_P2.54mm_Vertical,J_BEAM
 1,16 MHz,Crystal_HC49-4H_Vertical,Y1
-1,33uH 3A,L_Radial_D10.0mm_P5.00mm_Fastron_07P,L1
-1,ESP32-CAM 5V GND,PinHeader_1x02_P2.54mm_Vertical,J_CAM
-1,ATmega328P-PU (Uno bootloader),DIP-28_W7.62mm_Socket,U1
+1,LEFT HC-SR04 5V TRIG ECHO GND,PinHeader_1x04_P2.54mm_Vertical,US_L
+1,2.2k,R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical,R5
+1,CENTRE SR04M-2 5V TRIG ECHO GND,PinHeader_1x04_P2.54mm_Vertical,US_C
 1,BUZZER SIG GND,PinHeader_1x02_P2.54mm_Vertical,J_BUZ
-1,ICSP,PinHeader_2x03_P2.54mm_Vertical,J5
+1,RIGHT HC-SR04 5V TRIG ECHO GND,PinHeader_1x04_P2.54mm_Vertical,US_R
+1,ESP32 DevKit left header (EN..VIN),PinSocket_1x15_P2.54mm_Vertical,J1
+1,RESET,SW_PUSH_6mm,SW1
+1,220u servo,CP_Radial_D6.3mm_P2.50mm,C11
+1,I2C 3V3 GND SDA SCL,PinHeader_1x04_P2.54mm_Vertical,J_I2C
+1,ESP32 DevKit right header (D23..3V3),PinSocket_1x15_P2.54mm_Vertical,J2
+1,TO L298N 12V / GND,"TerminalBlock_Phoenix_MKDS-1,5-2-5.08_1x02_P5.08mm_Horizontal",J_MPWR
+1,amber D13,LED_D3.0mm,LED2
+1,SERVO GND 5V SIG,PinHeader_1x03_P2.54mm_Vertical,J_SERVO

@@ -331,22 +331,6 @@
       {
         "netclass": "Power",
         "pattern": "VIN_ESP"
-      },
-      {
-        "netclass": "Power",
-        "pattern": "OUT1"
-      },
-      {
-        "netclass": "Power",
-        "pattern": "OUT2"
-      },
-      {
-        "netclass": "Power",
-        "pattern": "OUT3"
-      },
-      {
-        "netclass": "Power",
-        "pattern": "OUT4"
       }
     ]
   },

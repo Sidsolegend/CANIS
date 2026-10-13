@@ -1,5 +1,5 @@
 # Checks canis_main.kicad_pcb against the firmware: ATmega pins vs the Uno sketch, ESP32 GPIOs vs canis_config.h /
-# CANIS_Core.ino, L298 and LM2596 pinouts, diode/LED/cap polarity, single-pad nets. Run from hardware/pcb with
+# CANIS_Core.ino, the L298N module header and LM2596 pinouts, diode/LED/cap polarity, single-pad nets. Run from hardware/pcb with
 # KiCad's Python:  .../Python.framework/Versions/3.9/bin/python3 check_netlist.py
 
 import pcbnew, re, collections, sys
@@ -42,16 +42,15 @@ for k, net in (('CANIS_ENC_L_A_PIN','ENC_L_A'),('CANIS_ENC_L_B_PIN','ENC_L_B'),(
 want('J1', A[gp(r'ARD_TX_PIN\s*=\s*(\d+)')], 'LINK_RX_AT')
 want('J2', B[gp(r'ARD_RX_PIN\s*=\s*(\d+);\s*//\s*ESP32 RX2')], 'LINK_TX_DIV')
 want('J1', 14, 'GND'); want('J1', 15, 'VIN_ESP'); want('J2', 14, 'GND'); want('J2', 15, '3V3')
-# L298 datasheet pinout
-for p, n in {1:'GND',2:'OUT1',3:'OUT2',4:'VMOT',5:'M_IN1',6:'M_ENA',7:'M_IN2',8:'GND',9:'5V',10:'M_IN3',11:'M_ENB',12:'M_IN4',13:'OUT3',14:'OUT4',15:'GND'}.items(): want('U3', p, n)
+# L298N module control header: ENA IN1 IN2 IN3 IN4 ENB, then 12V/GND screw terminal
+for p, n in {1:'M_ENA',2:'M_IN1',3:'M_IN2',4:'M_IN3',5:'M_IN4',6:'M_ENB'}.items(): want('J_DRV', p, n)
+want('J_MPWR', 1, 'VMOT'); want('J_MPWR', 2, 'GND')
 # LM2596 TO-220-5, ATmega power
 for p, n in {1:'VMOT',2:'SW',3:'GND',4:'5V',5:'GND'}.items(): want('U2', p, n)
 for p in (7, 20): want('U1', p, '5V')
 for p in (8, 22): want('U1', p, 'GND')
 # polarity: diode pad1=K pad2=A ; LED pad1=K pad2=A ; CP pad1=+
 want('D1',1,'VMOT'); want('D1',2,'VBAT'); want('D2',1,'SW'); want('D2',2,'GND'); want('D3',1,'VIN_ESP'); want('D3',2,'5V')
-for r in ('D4','D5','D6','D7'): assert pn[(r,'1')] == 'VMOT', r
-for r in ('D8','D9','D10','D11'): assert pn[(r,'2')] == 'GND', r
 for r in ('LED1','LED2'): want(r, 1, 'GND')
 want('C1',1,'VMOT'); want('C2',1,'5V'); want('C11',1,'5V'); want('J3',1,'VBAT'); want('J3',2,'GND')
 # dangling nets (single pad) and unrouted

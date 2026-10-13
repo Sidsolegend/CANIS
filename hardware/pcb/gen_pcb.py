@@ -138,21 +138,13 @@ part('R3', 'Resistor_THT', 'R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical', 23,
 part('R4', 'Resistor_THT', 'R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical', 47, 42.5, 0, '1k', {1: 'LINK_TX_AT', 2: 'LINK_TX_DIV'})
 part('R5', 'Resistor_THT', 'R_Axial_DIN0207_L6.3mm_D2.5mm_P2.54mm_Vertical', 47, 45.5, 0, '2.2k', {1: 'LINK_TX_DIV', 2: 'GND'})
 
-# ---------------------------------------------------------------- L298N motor driver (bottom left), heatsink toward the edge
-L298 = {1: 'GND', 2: 'OUT1', 3: 'OUT2', 4: 'VMOT', 5: 'M_IN1', 6: 'M_ENA', 7: 'M_IN2', 8: 'GND', 9: '5V',
-        10: 'M_IN3', 11: 'M_ENB', 12: 'M_IN4', 13: 'OUT3', 14: 'OUT4', 15: 'GND'}
-part('U3', 'Package_TO_SOT_THT', 'TO-220-15_P2.54x5.08mm_StaggerOdd_Lead4.58mm_Vertical', 32, 80, 0, 'L298N Multiwatt15', L298)
-part('M1', 'TerminalBlock_Phoenix', 'TerminalBlock_Phoenix_MKDS-1,5-2-5.08_1x02_P5.08mm_Horizontal', 6, 70, 90, 'LEFT MOTOR', {1: 'OUT1', 2: 'OUT2'})
-part('M2', 'TerminalBlock_Phoenix', 'TerminalBlock_Phoenix_MKDS-1,5-2-5.08_1x02_P5.08mm_Horizontal', 72, 72, 90, 'RIGHT MOTOR', {1: 'OUT3', 2: 'OUT4'})
-label('MOTOR L', 12, 69, 0.8)
-label('MOTOR R', 74, 75, 0.8)
-part('C4', 'Capacitor_THT', 'C_Disc_D3.0mm_W2.0mm_P2.50mm', 14, 74, 0, '100n motor L', {1: 'OUT1', 2: 'OUT2'})
-part('C5', 'Capacitor_THT', 'C_Disc_D3.0mm_W2.0mm_P2.50mm', 64, 77, 0, '100n motor R', {1: 'OUT3', 2: 'OUT4'})
-for ref, o, x, y in (('D4', 'OUT1', 20, 77), ('D5', 'OUT2', 26, 77), ('D8', 'OUT1', 20, 84), ('D9', 'OUT2', 26, 84),
-                     ('D6', 'OUT3', 54, 77), ('D7', 'OUT4', 58.5, 77), ('D10', 'OUT3', 54, 84), ('D11', 'OUT4', 58.5, 84)):
-    top = int(ref[1:]) < 8 or ref in ('D6', 'D7')
-    pads = {1: 'VMOT', 2: o} if y == 77 else {1: o, 2: 'GND'}
-    part(ref, 'Diode_THT', 'D_DO-41_SOD81_P3.81mm_Vertical_CathodeUp', x, y, 90, '1N5819', pads)
+# ---------------------------------------------------------------- L298N module connections (the red module stays off-board)
+# Control header, same order as the module's own 6-pin header: ENA IN1 IN2 IN3 IN4 ENB. Use female-female jumpers.
+part('J_DRV', 'Connector_PinHeader_2.54mm', 'PinHeader_1x06_P2.54mm_Vertical', 24, 80, 90, 'TO L298N module: ENA IN1 IN2 IN3 IN4 ENB',
+     {1: 'M_ENA', 2: 'M_IN1', 3: 'M_IN2', 4: 'M_IN3', 5: 'M_IN4', 6: 'M_ENB'})
+label('L298N module: ENA IN1 IN2 IN3 IN4 ENB', 14, 84.5, 0.8)
+part('J_MPWR', 'TerminalBlock_Phoenix', 'TerminalBlock_Phoenix_MKDS-1,5-2-5.08_1x02_P5.08mm_Horizontal', 8, 74, 90, 'TO L298N 12V / GND', {1: 'VMOT', 2: 'GND'})
+label('L298N 12V (lower) / GND', 14, 72.5, 0.8)
 
 # ---------------------------------------------------------------- sensor headers on the right edge
 US = [('US_R', 'RIGHT HC-SR04', 10), ('US_C', 'CENTRE SR04M-2', 24), ('US_L', 'LEFT HC-SR04', 38)]
@@ -219,7 +211,7 @@ proj = {
         'meta': {'version': 5},
         'classes': [nclass('Default', 0.2, 0.3, 0.9, 0.5, 2147483647), nclass('Power', 0.2, 0.9, 1.0, 0.6, -1)],
         'netclass_patterns': [{'netclass': 'Power', 'pattern': p} for p in
-                              ('VBAT', 'VMOT', '5V', 'SW', 'VIN_ESP', 'OUT1', 'OUT2', 'OUT3', 'OUT4')]},
+                              ('VBAT', 'VMOT', '5V', 'SW', 'VIN_ESP')]},
 }
 json.dump(proj, open(os.path.join(HERE, 'canis_main.kicad_pro'), 'w'), indent=2)
 print('wrote', OUT, 'parts', len(REFS), 'nets', len(nets))
