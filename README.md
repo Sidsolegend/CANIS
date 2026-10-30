@@ -20,7 +20,7 @@ My Goldendoodle, Shifu, is afraid of moving objects. He also barks for attention
 - **Treat dispenser.** A servo-driven gate on an Arduino Uno, with a short tone before each treat so the sound predicts food. There is a cooldown between treats and a daily cap.
 - **Dashboard.** A Flask app on the Pi shows live state, keeps an event log and exports CSV files for the study.
 - **Safety layer.** The Arduino stops the motors if it hasn't heard from the ESP32 for one second, so a crashed program or a loose wire ends with a stopped robot. A single exposure setting decides how much motion is allowed at all. It starts at zero.
-- **Closed-loop drive (not enabled).** The motors have encoders and the code includes a per-wheel controller and a control-barrier-function safety filter. It is switched off in the config and has not been run on the robot yet.
+- **Closed-loop drive.** The N20 motors have encoders (754 counts per wheel turn, about 0.18 mm per count). A per-wheel speed controller matches the two wheels, and a control-barrier-function safety filter sits between the controller and the motors: it only removes motion towards Shifu, never adds it, so the robot never closes inside a 60 cm comfort distance. Top speed is capped at 0.35 m/s. Both have been run on the robot.
 
 ## How it was built
 
@@ -88,7 +88,7 @@ canis_config.h           every tunable value for the firmware, in one place
 vision/                  YOLO dog detection (Pi)
 audio/                   bark detection (Pi)
 dashboard/               Flask dashboard and event log (Pi)
-control/                 closed-loop controller and safety filter (not enabled)
+control/                 closed-loop controller and safety filter
 study/                   study protocol and the analysis script
 tests/                   118 tests, no hardware needed
 hardware/                wiring, bring-up guides, CAD, STL files
@@ -130,13 +130,19 @@ python3 audio/detect_bark.py --bt-mac <microphone address>
 What has been run:
 - The full loop, camera to detection to dashboard to ESP32 to treat, works on the bench.
 - The bark loop works end to end: a bark, five seconds of quiet, then a treat. In the live test there were no false positives.
-- With a test build that boots straight into `PLAY`, the robot roams on the floor with the battery pack and power bank running everything, no laptop attached. The two motors do not run at the same speed yet, so it drifts. That is what the encoders are for.
+- Encoder test: 754 counts per wheel turn, measured over 10 hand turns with 4x decoding. That fits a 3-pulse encoder on a 63:1 gearbox (3 x 63 x 4 = 756).
+- Mobile drive with the closed-loop controller and the safety filter has been tested on the robot, with Shifu in the room.
 - 118 automated tests pass.
 
-What has not:
-- The encoders are wired but their counts per turn have not been measured.
-- The closed-loop drive and safety filter have never run on the robot.
-- The behaviour study has not started. There are no results, and I make no claim that the robot changes Shifu's behaviour. The protocol is in [study/STUDY_PROTOCOL.md](study/STUDY_PROTOCOL.md). It is one dog, one home, one owner.
+The trial with Shifu:
+- Week 1 was stationary acclimation: treats on, no motion, sessions growing from 15 to 60 minutes a day. He was scared of the robot the first time and got used to it over these sessions.
+- Week 2 turned on mobile drive and `GUARD`. Over that week, treats earned rose by about 25% from day 1 to day 7.
+- This is one dog with no control, so I can't rule out that he simply got used to the robot, and treats are counted when they are sent, not when they drop (see below). The raw session logs are in my notes, not in this repo yet.
+
+Not finished yet:
+- The repo config still has the old wheel values and `CANIS_MOBILE_ENABLED` set to 0. The robot runs with the measured values; the config here will be updated.
+- Treat confirmation from the dispenser is designed but not wired (the 5 V to 3.3 V return line needs a divider), so treats are counted on send.
+- The next step is a pre-registered study with a proper baseline, following [study/STUDY_PROTOCOL.md](study/STUDY_PROTOCOL.md).
 
 Known problems and limits are listed in [docs/KNOWN_ISSUES.md](docs/KNOWN_ISSUES.md).
 
