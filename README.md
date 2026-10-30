@@ -93,8 +93,6 @@ study/                   study protocol and the analysis script
 tests/                   118 tests, no hardware needed
 hardware/                wiring, bring-up guides, CAD, STL files
 docs/                    architecture, safety, interfaces, build story, known issues
-paper/                   systems paper draft
-crest/                   write-up prepared for a CREST Gold Award submission
 prototypes/              early test sketches from before the current firmware
 ```
 

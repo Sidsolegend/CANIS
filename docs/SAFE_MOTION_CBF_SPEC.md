@@ -15,9 +15,6 @@ does not replace them:**
 - `CANIS_Core/canis_config.h` - single source of truth for tunables. Every
   value cited here is either from that file (marked *[existing]*) or is a new
   tunable this spec proposes (marked *[new]*).
-- `paper/canis_paper_draft_v3.md` - the systems paper. This layer is the
-  intended **§ "safe motion"** contribution; it slots into the existing
-  arousal/exposure architecture.
 - `study/STUDY_PROTOCOL.md` - validation. §8 below adds the pre-registered
   metrics that test this layer specifically.
 

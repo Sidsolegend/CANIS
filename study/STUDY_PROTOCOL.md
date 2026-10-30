@@ -265,8 +265,7 @@ amendment, not a tuning knob.
 methods are limited to a mild auditory cue, food rewards, and pre-gated,
 duration-bounded motion, under the fail-safes enumerated in `docs/SAFETY.md`.
 No institutional review exists for this owner-run study and **therefore no
-formal behavioral-efficacy claim will be published from it** (consistent with
-`paper/canis_paper_draft_v3.md` §8); the outputs are (i) a welfare-gated exposure
+formal behavioral-efficacy claim will be published from it**; the outputs are (i) a welfare-gated exposure
 record and (ii) within-dog descriptive statistics.
 
 ## 9. Data & artifacts
