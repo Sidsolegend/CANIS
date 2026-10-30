@@ -21,3 +21,7 @@ crest/
 paper/
 docs/INTEGRATION_STATIONARY.md
 docs/ASSEMBLE_AND_TEST.md
+hardware/ENCODER_BRINGUP.md
+hardware/MOBILE_BRINGUP.md
+hardware/PRINT_NOTES.md
+docs/MOBILE_UPGRADE_STATUS.md

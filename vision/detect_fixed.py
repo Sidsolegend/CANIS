@@ -2,8 +2,8 @@
 """
 CANIS - FIXED room camera detection (mode C, `fixed_room`)
 ==========================================================
-Camera architecture C of canis_config.h "Camera architecture A/B/C"
-(docs/MOBILE_UPGRADE_STATUS.md §2/§5b): a FIXED camera watches the room from a
+Camera architecture C of canis_config.h "Camera architecture A/B/C":
+a FIXED camera watches the room from a
 known mount pose; the Pi is off-board and stationary. Per frame:
 
     YOLO   -> the DOG            (no marker on the dog - learned detector)

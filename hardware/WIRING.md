@@ -12,8 +12,7 @@ This file now covers **two builds** from the same wiring:
 - **Mobile** (`CANIS_MOBILE_ENABLED = 1`) - adds 2× quadrature encoders on the
   ESP32, an IMU + VL53LX ToF on I²C, and swaps both bare DC motors for encoder
   gearmotors. Everything stationary keeps working unchanged; the mobile parts
-  are *additions*, never replacements. See `hardware/MOBILE_BRINGUP.md` for the
-  step-by-step "motors arrived, do exactly this" procedure.
+  are *additions*, never replacements.
 
 ---
 
@@ -147,7 +146,7 @@ two Hall channels A/B.
   cost) - this is why the encoders land on the ESP32, not the Uno, keeping the
   Uno a dumb, certifiable executor.
 - `CANIS_ENC_COUNTS_PER_REV = 1320` (4× decode). **Verify this on your motor**
-  (see MOBILE_BRINGUP §4) - a wrong count silently corrupts every distance the
+  - a wrong count silently corrupts every distance the
   barrier trusts.
 - **WROVER-board caveat:** WROVER modules burn GPIO 16/17 for PSRAM. On a WROVER
   board, remap the RIGHT encoder to the input-only pins 36/39 and change

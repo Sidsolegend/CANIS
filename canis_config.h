@@ -329,7 +329,7 @@
 #endif
 
 // ======================= Camera architecture A/B/C (NEW) =======================
-// docs/MOBILE_UPGRADE_STATUS.md §2/§5b: all three camera architectures are
+// All three camera architectures are
 // implemented behind this ONE switch, so you pick by setting, not rewriting:
 //
 //   A  CANIS_CAMERA_ONBOARD          robot's-eye; camera attached directly to

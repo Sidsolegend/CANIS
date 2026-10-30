@@ -4,7 +4,7 @@
 
 Diagrams for the full system as implemented: the original
 behavior plus the `[OPT-n]` hardening (`DESIGN_DECISIONS.md`) and the
-mobile-drivetrain / YOLO / CBF upgrade (§§5–7 below; `docs/MOBILE_UPGRADE_STATUS.md`).
+mobile-drivetrain / YOLO / CBF upgrade (§§5–7 below).
 §§1–4 describe the system that ships **today** (stationary, `CANIS_MOBILE_ENABLED
 = 0`); §§5–7 describe the mobile/camera upgrade layered on top, inert until the
 flag is set. All Mermaid - renders on GitHub.
@@ -313,4 +313,3 @@ flowchart TB
 
 Modes B and C put the Pi off-board, so the drive command rides WiFi - see
 `SAFETY.md` Layer 3.4 for the added WiFi/stream failure mode (fail-safe: STOP).
-Detailed recommendation and sequencing: `docs/MOBILE_UPGRADE_STATUS.md` §5b.

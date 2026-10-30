@@ -77,7 +77,7 @@ Each processor does one kind of job, and each one fails on its own. The Uno is d
 | 6 x AA pack for the motors, a small USB power bank for the electronics | power |
 | Meccano frame, printed dispenser housing, castor | chassis |
 
-Wiring, pin tables and power notes: [hardware/WIRING.md](hardware/WIRING.md). Bring-up tests: [hardware/TESTING.md](hardware/TESTING.md). Encoder bring-up: [hardware/ENCODER_BRINGUP.md](hardware/ENCODER_BRINGUP.md).
+Wiring, pin tables and power notes: [hardware/WIRING.md](hardware/WIRING.md). Bring-up tests: [hardware/TESTING.md](hardware/TESTING.md).
 
 ## Repository layout
 

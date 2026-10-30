@@ -63,7 +63,7 @@ MONOCULAR DISTANCE MODEL (documented so the estimate is auditable):
     bearing_deg = atan2(cx - frame_w/2, f_px)
 
 CAMERA MODE (canis_config.h "Camera architecture A/B/C" block - one switch,
-three architectures; docs/MOBILE_UPGRADE_STATUS.md §2/§5b):
+three architectures):
     A  onboard          camera attached to the Pi (picamera2 / USB) - the
                         original robot's-eye pipeline, unchanged default.
     B  esp32cam_stream  robot's-eye frames pulled from an ESP32-CAM MJPEG/HTTP
